@@ -1,0 +1,37 @@
+import axios from "axios";
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = `${BACKEND_URL}/api`;
+
+const api = axios.create({ baseURL: API });
+
+// --- Runs ---
+export const createRun = (data) => api.post("/runs", data).then((r) => r.data);
+export const listRuns = (params) => api.get("/runs", { params }).then((r) => r.data);
+export const getRun = (id) => api.get(`/runs/${id}`).then((r) => r.data);
+export const updateRun = (id, data) => api.patch(`/runs/${id}`, data).then((r) => r.data);
+export const deleteRun = (id) => api.delete(`/runs/${id}`).then((r) => r.data);
+
+// --- Steps ---
+export const createStep = (data) => api.post("/steps", data).then((r) => r.data);
+export const listSteps = (params) => api.get("/steps", { params }).then((r) => r.data);
+export const getStep = (id) => api.get(`/steps/${id}`).then((r) => r.data);
+export const deleteStep = (id) => api.delete(`/steps/${id}`).then((r) => r.data);
+
+// --- Signals ---
+export const createSignal = (data) => api.post("/signals", data).then((r) => r.data);
+export const listSignals = (params) => api.get("/signals", { params }).then((r) => r.data);
+export const getSignal = (id) => api.get(`/signals/${id}`).then((r) => r.data);
+export const deleteSignal = (id) => api.delete(`/signals/${id}`).then((r) => r.data);
+
+// --- Persona Panels ---
+export const createPersonaPanel = (data) => api.post("/persona-panels", data).then((r) => r.data);
+export const listPersonaPanels = (params) => api.get("/persona-panels", { params }).then((r) => r.data);
+export const getPersonaPanel = (id) => api.get(`/persona-panels/${id}`).then((r) => r.data);
+export const updatePersonaPanel = (id, data) => api.patch(`/persona-panels/${id}`, data).then((r) => r.data);
+export const deletePersonaPanel = (id) => api.delete(`/persona-panels/${id}`).then((r) => r.data);
+
+// --- Seed ---
+export const seedData = () => api.post("/seed").then((r) => r.data);
+
+export default api;

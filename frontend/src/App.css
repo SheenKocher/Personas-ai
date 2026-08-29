@@ -1,0 +1,71 @@
+/* Severity chip styles */
+.chip-critical {
+  background: rgba(244, 63, 94, 0.15);
+  color: #F43F5E;
+  border-radius: 6px;
+}
+.chip-moderate {
+  background: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+  border-radius: 6px;
+}
+.chip-minor {
+  background: rgba(251, 191, 36, 0.15);
+  color: #FBBF24;
+  border-radius: 6px;
+}
+.chip-passing {
+  background: rgba(45, 212, 191, 0.15);
+  color: #2DD4BF;
+  border-radius: 6px;
+}
+
+/* Outcome colors */
+.outcome-queued { color: #64748B; }
+.outcome-running { color: #2DD4BF; }
+.outcome-success { color: #10B981; }
+.outcome-max-steps { color: #F59E0B; }
+.outcome-gave-up { color: #F43F5E; }
+.outcome-in-progress { color: #2DD4BF; }
+
+/* Persona accent chips */
+.chip-persona-standard {
+  background: rgba(129, 140, 248, 0.15);
+  color: #818CF8;
+  border-radius: 6px;
+}
+.chip-persona-motor {
+  background: rgba(167, 139, 250, 0.15);
+  color: #A78BFA;
+  border-radius: 6px;
+}
+.chip-persona-blind {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38BDF8;
+  border-radius: 6px;
+}
+
+/* Monospace recessed block */
+.mono-block {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 13px;
+  color: #94A3B8;
+  background: #0B0F1A;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+/* Nav active underline */
+.nav-active-underline {
+  position: relative;
+}
+.nav-active-underline::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #2DD4BF;
+  border-radius: 1px;
+}
