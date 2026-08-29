@@ -696,6 +696,38 @@ async def prototype_run(body: PrototypeRunRequest):
 
 # --- Signal Aggregation ---
 
+@api_router.get("/diff")
+async def cross_stage_diff(
+    goal: Optional[str] = None,
+    prototype_batch_id: Optional[str] = None,
+    runtime_batch_id: Optional[str] = None,
+    prototype_run_ids: Optional[str] = None,
+    runtime_run_ids: Optional[str] = None,
+):
+    """
+    Compare prototype vs runtime signals for the same goal/personas.
+    Returns a regression report grouped by screen.
+    """
+    from diff import build_cross_stage_diff
+
+    proto_ids = [r.strip() for r in prototype_run_ids.split(",") if r.strip()] if prototype_run_ids else None
+    rt_ids = [r.strip() for r in runtime_run_ids.split(",") if r.strip()] if runtime_run_ids else None
+
+    if not goal and not prototype_batch_id and not runtime_batch_id and not proto_ids and not rt_ids:
+        raise HTTPException(400, "Provide goal, batch IDs, or run IDs")
+
+    result = await build_cross_stage_diff(
+        db,
+        goal=goal,
+        prototype_batch_id=prototype_batch_id,
+        runtime_batch_id=runtime_batch_id,
+        prototype_run_ids=proto_ids,
+        runtime_run_ids=rt_ids,
+    )
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
 @api_router.get("/signals/aggregate")
 async def aggregate_signals(
     batch_id: Optional[str] = None,

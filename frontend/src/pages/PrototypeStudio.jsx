@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import axios from "axios";
+import { Spinner, ErrorBanner } from "@/components/shared";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -157,10 +158,21 @@ export default function PrototypeStudio() {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [batchResult, setBatchResult] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const pollRef = useRef(null);
+  const pollCountRef = useRef(0);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
 
   useEffect(() => {
-    axios.get(`${API}/prototype/graphs`).then((r) => setGraphs(r.data)).catch(() => {});
-    listPersonaPanels().then(setPanels).catch(() => {});
+    setLoadError(null);
+    Promise.all([
+      axios.get(`${API}/prototype/graphs`).then((r) => setGraphs(r.data)),
+      listPersonaPanels().then(setPanels),
+    ]).catch((e) => setLoadError(e?.response?.data?.detail || "Failed to load data"));
   }, []);
 
   const loadGraph = (g) => {
@@ -215,7 +227,7 @@ export default function PrototypeStudio() {
         setGraphs((prev) => [res.data, ...prev]);
         toast.success("Graph saved");
       }
-    } catch { toast.error("Save failed"); }
+    } catch (e) { toast.error(e?.response?.data?.detail || "Save failed"); }
     finally { setSaving(false); }
   };
 
@@ -230,16 +242,32 @@ export default function PrototypeStudio() {
       const res = await axios.post(`${API}/prototype/run`, body);
       const batchId = res.data.batch_id;
       toast.success(`Prototype run started: ${res.data.persona_count} personas`);
-      // Poll
-      const poll = setInterval(async () => {
+      // Poll with timeout
+      pollCountRef.current = 0;
+      pollRef.current = setInterval(async () => {
+        pollCountRef.current += 1;
+        // Timeout after ~4 minutes (30 polls * 8s)
+        if (pollCountRef.current > 30) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setRunning(false);
+          toast.error("Run timed out — check results on the Live Grid page");
+          return;
+        }
         try {
           const status = await axios.get(`${API}/engine/batch/${batchId}`);
           if (status.data.all_done) {
-            clearInterval(poll);
+            clearInterval(pollRef.current);
+            pollRef.current = null;
             setBatchResult(status.data);
             setRunning(false);
           }
-        } catch { clearInterval(poll); setRunning(false); }
+        } catch {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setRunning(false);
+          toast.error("Failed to check run status");
+        }
       }, 8000);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Run failed");

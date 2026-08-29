@@ -18,6 +18,7 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import axios from "axios";
+import { toast } from "sonner";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -356,10 +357,11 @@ export default function PersonaPanels() {
     try {
       const data = await listPersonaPanels();
       setPanels(data);
-      // Auto-select first panel if none selected
       if (!activePanelId && data.length > 0) {
         loadPanel(data[0]);
       }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load panels");
     } finally {
       setLoading(false);
     }
@@ -391,7 +393,9 @@ export default function PersonaPanels() {
           personas,
         });
         setDirty(false);
-      } catch { /* silent */ }
+      } catch (e) {
+        console.error("Auto-save failed", e);
+      }
     }, 1500);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePanelId, audience, composition, clientRef, personas]);
@@ -431,7 +435,9 @@ export default function PersonaPanels() {
         });
         setDirty(false);
       }
-    } catch { /* toast handled by global */ }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Generation failed");
+    }
     finally { setGenerating(false); }
   };
 
@@ -449,7 +455,9 @@ export default function PersonaPanels() {
       setActivePanelId(created.id);
       setDirty(false);
       fetchPanels();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to save panel");
+    }
     finally { setSaving(false); }
   };
 
@@ -463,7 +471,9 @@ export default function PersonaPanels() {
       setAudience("");
       setClientRef("");
       fetchPanels();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete panel");
+    }
   };
 
   /* New blank panel */
