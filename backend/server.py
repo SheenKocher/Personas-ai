@@ -177,6 +177,22 @@ async def health():
     return {"status": "ok"}
 
 
+# --- Spike: Remote Browser Test ---
+
+class SpikeRunRequest(BaseModel):
+    target_url: str = "https://tier3.college"
+
+@api_router.post("/spike/run")
+async def spike_run(body: SpikeRunRequest):
+    from spike import execute_spike_run
+    try:
+        result = await execute_spike_run(db, target_url=body.target_url)
+        return result
+    except Exception as e:
+        logger.exception("Spike run failed")
+        raise HTTPException(500, detail=str(e))
+
+
 # --- Runs CRUD ---
 
 @api_router.post("/runs", response_model=dict)

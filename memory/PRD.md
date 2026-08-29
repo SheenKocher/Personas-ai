@@ -7,6 +7,7 @@ Build a FastAPI + MongoDB backend with a React frontend for a synthetic-user tes
 - **Backend**: FastAPI on port 8001, MongoDB via motor, 4 collections with full CRUD endpoints
 - **Frontend**: React (CRA) with Tailwind CSS, shadcn/ui components, dark theme
 - **Database**: MongoDB (local), database name from DB_NAME env var
+- **External services**: Browserbase (remote browser), Cloudinary (screenshot storage)
 
 ## User Personas
 - Single-tenant demo app, no authentication
@@ -23,23 +24,37 @@ Build a FastAPI + MongoDB backend with a React frontend for a synthetic-user tes
 - [x] Cross-Stage Diff placeholder page
 - [x] Dark theme matching user's design system
 
-## What's Been Implemented (2026-08-29)
+## What's Been Implemented
+
+### Phase 1 (2026-08-29)
 - Backend: Full CRUD for runs, steps, signals, persona_panels with ObjectId validation
 - Frontend: 5 pages (Live Grid, Persona Panels, New Run, Reports, Cross-Stage Diff)
 - Seed data: 5 personas auto-seeded on startup
 - Design: Dark theme with exact color palette per user spec
-- Meera (screen reader) tile shows AX-tree transcript
 - Testing: 100% backend + 100% frontend pass rate
+
+### Phase 2 — Spike (2026-08-29)
+- Browserbase remote browser connection via Playwright CDP (connect_over_cdp)
+- POST /api/spike/run endpoint: navigates to target URL, captures screenshot, extracts accessibility tree via CDP (Accessibility.getFullAXTree), captures console errors and failed network requests
+- Screenshot upload to Cloudinary, URL stored in step document
+- Results persisted as run + step documents in MongoDB
+- Testing: 9/9 backend tests passed, verified with https://tier3.college (305 AX nodes, 4 console errors captured)
+
+## Environment Variables
+- MONGO_URL, DB_NAME, CORS_ORIGINS
+- BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID
+- CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
 
 ## Prioritized Backlog
 ### P0 (Done)
 - Schema + CRUD + seed data + working skeleton
+- Remote browser spike (Browserbase + Cloudinary)
 
 ### P1 (Next)
+- Persona-driven agent loop replacing hardcoded spike
 - Reports page logic (aggregate friction data)
 - Cross-Stage Diff comparison view
 - Run detail page with steps timeline
-- Step viewer with screenshots
 
 ### P2
 - Persona JSON editor in panel dialog
