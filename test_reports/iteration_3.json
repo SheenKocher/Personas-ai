@@ -1,0 +1,54 @@
+{
+  "summary": "Backend-only testing of the new Persona Engine endpoints (POST /api/engine/run background pattern + GET /api/engine/run/{run_id} poll). Wrote /app/backend/tests/test_engine.py with 12 pytest tests — ALL 12 PASSED. Verified: (1) GET on completed run 6a9352683b24d270e9e8be86 returns outcome=gave_up, still_running=false, 10 steps sorted by index with valid action types from allowed_actions, Cloudinary screenshot URLs, browserbase_session_id, Priya persona, 2 signals sorted by severity desc; (2) GET on run 6a935131879ba779c87ac762 has 12 steps; (3) invalid id => 400, valid nonexistent 24-char id => 404; (4) POST returns {run_id, status:'started'} in <10s (no waiting for engine loop); (5) persona resolution: no persona => Priya from seed panel; persona_panel_id + persona_index=2 => Meera; invalid panel id => 400; nonexistent panel id => 404; persona_index out of range => 400; (6) prior CRUD (health, persona-panels, runs) still works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "uvicorn --reload (dev config)",
+        "issue": "Backend was launched under uvicorn --reload; writing a file under /app/backend/tests/ triggered a reload while two engine background asyncio tasks were still in flight. Reload got stuck in 'Application shutdown complete → Finished server process' for >2 minutes and never started a new process — required manual `supervisorctl restart backend` to recover. In-flight engine tasks (which own real Browserbase sessions) block clean uvicorn reload/shutdown. Suggest: (a) exclude backend/tests/ from reload watch OR (b) run without --reload in this environment OR (c) track and cancel _engine_tasks on shutdown."
+      },
+      {
+        "endpoint": "POST /api/engine/run",
+        "issue": "No cancel/list/limit endpoint for in-flight engine runs. _engine_tasks dict is process-local — a restart orphans the run doc in outcome='in_progress' forever. Consider a shutdown handler that marks in-flight runs as gave_up on graceful shutdown."
+      },
+      {
+        "endpoint": "browser upload",
+        "issue": "'urllib3 connection pool is full, discarding connection: api.cloudinary.com. Connection pool size: 1' — Cloudinary uploader appears to use a size-1 pool that gets exhausted when multiple engine runs execute concurrently. Non-fatal but wasteful (new TCP connection per upload)."
+      },
+      {
+        "endpoint": "startup/shutdown",
+        "issue": "Still using deprecated @app.on_event (carried over from prior iterations)."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_engine.py",
+    "/app/test_reports/pytest/engine_results.xml"
+  ],
+  "action_items": [
+    "Track engine background tasks so uvicorn shutdown/reload can cancel them cleanly (currently blocks shutdown).",
+    "Exclude backend/tests/ from uvicorn --reload watch (or disable --reload) — writing a test file mid-run halted the whole backend.",
+    "Add a graceful-shutdown hook that marks any run still in _engine_tasks as outcome='gave_up' with an error message; otherwise orphaned runs stay 'in_progress' forever.",
+    "Bump Cloudinary uploader HTTP connection-pool size (currently 1) to reduce warnings under concurrent engine runs.",
+    "Optional: expose GET /api/engine/runs (list currently-running run_ids) and DELETE/POST cancel for observability."
+  ],
+  "critical_code_review_comments": [
+    "server.py continues to grow (~725 lines) — still recommend splitting into models.py / routes/engine.py / routes/crud.py before adding more features.",
+    "engine_run's persona-resolution logic is entangled with request handling. Extract resolve_persona(body) -> dict helper for testability.",
+    "_engine_tasks is a module-level dict with no lock — safe under a single asyncio loop, but breaks if the app is ever run with >1 worker. Not a bug today but worth documenting.",
+    "The GET endpoint decides 'still_running' by checking _engine_tasks membership — after a process restart this always returns False even if a run was truly in progress. In practice the run doc will stay outcome='in_progress' indefinitely (see action_items).",
+    "POST /api/engine/run always returns 200 on success. Convention is 202 Accepted for 'started in background'; consider changing.",
+    "Structured 502/504 error mapping mentioned in the problem statement lives inside engine/browser modules — not observed on the happy paths tested here. Not directly validated (would require inducing upstream failures)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_engine.py"
+  ],
+  "success_rate": {"backend": "100% (12/12 pytest)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "n/a (no auth in app)",
+  "seed_data_creation": "Two ephemeral engine runs were POSTed (persona resolution smoke tests) and immediately DELETEd via /api/runs/{id}. Their background asyncio tasks kept executing (each consumed 1 Browserbase session + LLM/Cloudinary calls) — this is the unavoidable side effect of testing the POST endpoint. No test data left in Mongo. Pre-existing completed runs 6a9352683b24d270e9e8be86 (10 steps, 2 signals) and 6a935131879ba779c87ac762 (12 steps) were only READ, never modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "IMPORTANT — DO NOT modify files under /app/backend/tests/ while an engine run is in flight: uvicorn --reload will trigger, fail to shut down (background tasks hold the loop), and hang the backend for minutes. Recovery: `sudo supervisorctl restart backend`. To avoid: write your test file BEFORE running any POST /api/engine/run, or `touch` no files during test execution. Run engine tests serially only: `REACT_APP_BACKEND_URL=... pytest backend/tests/test_engine.py -n 0`. pytest.ini forces `-n 2 --dist loadscope` so always pass `-n 0` for the engine suite. Every POST to /api/engine/run consumes 1 real Browserbase session + Cloudinary uploads + GPT-5 calls — only test 1-2 POSTs max per iteration. Verify completed runs (6a9352683b24d270e9e8be86, 6a935131879ba779c87ac762) via GET only.",
+  "rca of the issue": "The single unstable moment was pytest reruns hanging with ReadTimeout=30s. Root cause: writing test_engine.py mid-run triggered `WatchFiles detected changes in 'tests/test_engine.py'. Reloading...` in uvicorn --reload. The reload issued Shutting down + Application shutdown complete, but the new worker process never started (logs stop at `Finished server process [5952]`). Two engine background asyncio tasks (started by earlier POSTs) were still holding Browserbase CDP sessions when shutdown fired; the shutdown appears to have deadlocked the reloader. Manual `supervisorctl restart backend` restored service. Mitigation options listed in action_items."
+}

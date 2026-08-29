@@ -193,6 +193,164 @@ async def spike_run(body: SpikeRunRequest):
         raise HTTPException(500, detail=str(e))
 
 
+# --- Persona Engine ---
+
+class EngineRunRequest(BaseModel):
+    target_url: str = "https://tier3.college"
+    goal: str = "Find the pricing page"
+    stage: StageEnum = StageEnum.prototype
+    persona: Optional[dict] = None
+    persona_panel_id: Optional[str] = None
+    persona_index: int = 0
+
+# Background task storage for running engines
+import asyncio as _asyncio
+_engine_tasks: dict = {}  # run_id -> asyncio.Task
+
+async def _run_engine_background(run_id: str, target_url: str, goal: str, persona: dict, stage: str):
+    """Background wrapper that catches all errors and finalizes the run."""
+    from engine import run_persona_engine
+    try:
+        result = await run_persona_engine(
+            db=db,
+            target_url=target_url,
+            goal=goal,
+            persona=persona,
+            stage=stage,
+            existing_run_id=run_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Background engine run failed for %s", run_id)
+        # Try to update the run as gave_up
+        try:
+            from bson import ObjectId as OID
+            await db.runs.update_one(
+                {"_id": OID(run_id)},
+                {"$set": {"outcome": "gave_up", "ended_at": datetime.now(timezone.utc).isoformat()}}
+            )
+        except Exception:
+            pass
+        return {"run_id": run_id, "outcome": "gave_up", "error": str(e)}
+    finally:
+        _engine_tasks.pop(run_id, None)
+
+from starlette.responses import JSONResponse
+
+@api_router.post("/engine/run")
+async def engine_run(body: EngineRunRequest):
+    from engine import run_persona_engine
+    from browser import BrowserUpstreamError, BrowserTimeoutError
+
+    # Resolve persona
+    persona = body.persona
+    if not persona and body.persona_panel_id:
+        try:
+            panel_doc = await db.persona_panels.find_one({"_id": ObjectId(body.persona_panel_id)})
+        except Exception:
+            raise HTTPException(400, "Invalid persona_panel_id")
+        if not panel_doc:
+            raise HTTPException(404, "Persona panel not found")
+        personas = panel_doc.get("personas", [])
+        if body.persona_index >= len(personas):
+            raise HTTPException(400, f"persona_index {body.persona_index} out of range (panel has {len(personas)} personas)")
+        persona = personas[body.persona_index]
+
+    if not persona:
+        seed = await db.persona_panels.find_one({"client_ref": "seed-demo"})
+        if seed and seed.get("personas"):
+            persona = seed["personas"][0]
+        else:
+            raise HTTPException(400, "No persona provided and no seed panel found")
+
+    # Create run document upfront so we can return the ID immediately
+    now_start = datetime.now(timezone.utc).isoformat()
+    run_doc = {
+        "stage": body.stage.value,
+        "persona": persona,
+        "target": body.target_url,
+        "goal": body.goal,
+        "outcome": "in_progress",
+        "started_at": now_start,
+        "ended_at": None,
+    }
+    run_result = await db.runs.insert_one(run_doc)
+    run_id = str(run_result.inserted_id)
+
+    # Launch engine in background task
+    task = _asyncio.create_task(
+        _run_engine_background(run_id, body.target_url, body.goal, persona, body.stage.value)
+    )
+    _engine_tasks[run_id] = task
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "run_id": run_id,
+            "status": "started",
+            "message": "Engine run started in background. Poll GET /api/engine/run/{run_id} for results.",
+        },
+    )
+
+@api_router.get("/engine/run/{run_id}")
+async def get_engine_run_status(run_id: str):
+    """Poll for engine run results."""
+    try:
+        oid = ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+
+    run_doc = await db.runs.find_one({"_id": oid})
+    if not run_doc:
+        raise HTTPException(404, "Run not found")
+
+    run_data = {
+        "run_id": run_id,
+        "outcome": run_doc.get("outcome", "in_progress"),
+        "stage": run_doc.get("stage"),
+        "target": run_doc.get("target"),
+        "goal": run_doc.get("goal"),
+        "started_at": run_doc.get("started_at"),
+        "ended_at": run_doc.get("ended_at"),
+        "browserbase_session_id": run_doc.get("browserbase_session_id"),
+        "persona": run_doc.get("persona"),
+        "still_running": run_id in _engine_tasks,
+    }
+
+    # If completed, include steps and signals
+    if run_doc.get("outcome") != "in_progress" or run_id not in _engine_tasks:
+        steps_cursor = db.steps.find({"run_id": run_id}).sort("index", 1)
+        steps = await steps_cursor.to_list(50)
+        signals_cursor = db.signals.find({"run_id": run_id}).sort("severity", -1)
+        signals = await signals_cursor.to_list(50)
+
+        run_data["steps"] = [
+            {
+                "index": s.get("index"),
+                "action": s.get("action"),
+                "reasoning": s.get("reasoning", "")[:300],
+                "screenshot_before_url": s.get("screenshot_before_url"),
+                "screenshot_after_url": s.get("screenshot_after_url"),
+                "location": s.get("location"),
+                "action_result": s.get("action_result"),
+            }
+            for s in steps
+        ]
+        run_data["signals"] = [
+            {
+                "type": sig.get("type"),
+                "severity": sig.get("severity"),
+                "screen": sig.get("screen"),
+                "description": sig.get("description"),
+            }
+            for sig in signals
+        ]
+        run_data["total_steps"] = len(steps)
+        run_data["total_signals"] = len(signals)
+
+    return run_data
+
+
 # --- Runs CRUD ---
 
 @api_router.post("/runs", response_model=dict)
@@ -569,4 +727,16 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    # Cancel in-flight engine tasks and mark runs as gave_up
+    for run_id, task in list(_engine_tasks.items()):
+        task.cancel()
+        try:
+            await db.runs.update_one(
+                {"_id": ObjectId(run_id), "outcome": "in_progress"},
+                {"$set": {"outcome": "gave_up", "ended_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logger.info("Marked orphaned run %s as gave_up on shutdown", run_id)
+        except Exception:
+            pass
+    _engine_tasks.clear()
     client.close()
