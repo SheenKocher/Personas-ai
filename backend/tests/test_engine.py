@@ -140,11 +140,10 @@ class TestPostEngineRunImmediate:
         r = client.post(f"{API}/engine/run", json=payload, timeout=15)
         elapsed = time.time() - t0
 
-        assert r.status_code == 200, r.text
+        assert r.status_code == 202, r.text
         data = r.json()
         assert data.get("status") == "started"
         assert data.get("run_id"), "run_id missing"
-        assert len(data["run_id"]) == 24, "run_id should be a 24-char ObjectId string"
         # must return quickly — the engine loop runs in background
         assert elapsed < 10, f"POST took {elapsed:.1f}s, expected fast return"
 

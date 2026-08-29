@@ -351,6 +351,139 @@ async def get_engine_run_status(run_id: str):
     return run_data
 
 
+# --- Parallel Panel Engine ---
+
+class PanelRunRequest(BaseModel):
+    target_url: str = "https://tier3.college"
+    goal: str = "Find the pricing page"
+    stage: StageEnum = StageEnum.prototype
+    persona_panel_id: Optional[str] = None
+    persona_indices: Optional[List[int]] = None  # specific indices, or None for first N
+    concurrency: int = 3
+
+# batch_id -> list of run_ids for tracking
+_batch_tasks: dict = {}  # batch_id -> asyncio.Task
+
+async def _run_panel_background(batch_id: str, target_url: str, goal: str, personas: list, stage: str, concurrency: int):
+    """Background wrapper for parallel panel runs."""
+    from engine import run_panel_parallel
+    try:
+        result = await run_panel_parallel(
+            db=db,
+            target_url=target_url,
+            goal=goal,
+            personas=personas,
+            stage=stage,
+            concurrency=concurrency,
+            batch_id=batch_id,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Panel run batch %s failed: %s", batch_id, e)
+        return {"batch_id": batch_id, "error": str(e)}
+    finally:
+        _batch_tasks.pop(batch_id, None)
+
+@api_router.post("/engine/run-panel")
+async def engine_run_panel(body: PanelRunRequest):
+    """Start parallel engine runs for multiple personas from a panel."""
+    import uuid as _uuid
+
+    # Resolve panel
+    if body.persona_panel_id:
+        try:
+            panel_doc = await db.persona_panels.find_one({"_id": ObjectId(body.persona_panel_id)})
+        except Exception:
+            raise HTTPException(400, "Invalid persona_panel_id")
+        if not panel_doc:
+            raise HTTPException(404, "Persona panel not found")
+    else:
+        panel_doc = await db.persona_panels.find_one({"client_ref": "seed-demo"})
+        if not panel_doc:
+            raise HTTPException(400, "No panel found")
+
+    all_personas = panel_doc.get("personas", [])
+    if not all_personas:
+        raise HTTPException(400, "Panel has no personas")
+
+    # Select personas
+    if body.persona_indices:
+        selected = []
+        for idx in body.persona_indices:
+            if idx < 0 or idx >= len(all_personas):
+                raise HTTPException(400, f"persona_indices contains out-of-range index {idx} (panel has {len(all_personas)} personas)")
+            selected.append(all_personas[idx])
+    else:
+        selected = all_personas[:body.concurrency]
+
+    batch_id = str(_uuid.uuid4())
+
+    # Launch in background
+    task = _asyncio.create_task(
+        _run_panel_background(batch_id, body.target_url, body.goal, selected, body.stage.value, body.concurrency)
+    )
+    _batch_tasks[batch_id] = task
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "batch_id": batch_id,
+            "status": "started",
+            "persona_count": len(selected),
+            "personas": [p.get("name", "?") for p in selected],
+            "message": f"Panel run started with {len(selected)} personas. Poll GET /api/engine/batch/{'{batch_id}'} for results.",
+        },
+    )
+
+@api_router.get("/engine/batch/{batch_id}")
+async def get_engine_batch_status(batch_id: str):
+    """Poll for parallel panel run results."""
+    still_running = batch_id in _batch_tasks
+
+    # Find all runs in this batch
+    cursor = db.runs.find({"batch_id": batch_id}).sort("started_at", 1)
+    runs = await cursor.to_list(20)
+
+    if not runs:
+        raise HTTPException(404, "Batch not found")
+
+    run_summaries = []
+    for r in runs:
+        rid = str(r["_id"])
+        summary = {
+            "run_id": rid,
+            "persona_name": r.get("persona", {}).get("name", "?"),
+            "outcome": r.get("outcome", "in_progress"),
+            "started_at": r.get("started_at"),
+            "ended_at": r.get("ended_at"),
+            "browserbase_session_id": r.get("browserbase_session_id"),
+        }
+        # If completed, count steps and signals
+        if r.get("outcome") != "in_progress":
+            step_count = await db.steps.count_documents({"run_id": rid})
+            signal_count = await db.signals.count_documents({"run_id": rid})
+            # Count rejected actions specifically
+            rejected_count = await db.signals.count_documents({
+                "run_id": rid,
+                "type": "behavioral",
+                "description": {"$regex": "rejected"},
+            })
+            summary["total_steps"] = step_count
+            summary["total_signals"] = signal_count
+            summary["rejected_actions"] = rejected_count
+        run_summaries.append(summary)
+
+    all_done = all(r["outcome"] != "in_progress" for r in run_summaries)
+
+    return {
+        "batch_id": batch_id,
+        "still_running": still_running,
+        "all_done": all_done,
+        "total_runs": len(run_summaries),
+        "runs": run_summaries,
+    }
+
+
 # --- Runs CRUD ---
 
 @api_router.post("/runs", response_model=dict)
@@ -647,7 +780,7 @@ SEED_PANEL = {
             "traits": "blind, navigates via screen reader, no visual reference",
             "disability": "blind",
             "accent_color": "#38BDF8",
-            "allowed_actions": ["type", "scroll", "navigate", "wait", "key", "report_friction", "give_up"],
+            "allowed_actions": ["click", "type", "scroll", "navigate", "wait", "key", "report_friction", "give_up"],
             "perception_mode": "ax_tree_only",
             "viewport_zoom": 1.0,
             "frustration_budget": 4,
@@ -695,7 +828,12 @@ SEED_PANEL = {
 async def seed_data():
     existing = await db.persona_panels.find_one({"client_ref": "seed-demo"})
     if existing:
-        return {"message": "Seed data already exists", "panel_id": str(existing["_id"])}
+        # Update personas to latest spec
+        await db.persona_panels.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"personas": SEED_PANEL["personas"]}},
+        )
+        return {"message": "Seed data updated", "panel_id": str(existing["_id"])}
     result = await db.persona_panels.insert_one(SEED_PANEL.copy())
     return {"message": "Seed data created", "panel_id": str(result.inserted_id)}
 
@@ -710,7 +848,12 @@ async def startup():
         await db.persona_panels.insert_one(SEED_PANEL.copy())
         logger.info("Seed persona panel created")
     else:
-        logger.info("Seed persona panel already exists")
+        # Always update personas to latest spec
+        await db.persona_panels.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"personas": SEED_PANEL["personas"]}},
+        )
+        logger.info("Seed persona panel updated to latest spec")
 
 
 # --- Include Router & Middleware ---
@@ -739,4 +882,8 @@ async def shutdown_db_client():
         except Exception:
             pass
     _engine_tasks.clear()
+    # Cancel in-flight batch tasks
+    for batch_id, task in list(_batch_tasks.items()):
+        task.cancel()
+    _batch_tasks.clear()
     client.close()

@@ -2,8 +2,11 @@
 Persona engine — stage-agnostic agent loop.
 perceive → think (LLM) → act → record → repeat
 until goal reached, give_up, or MAX_STEPS.
+
+Also provides run_panel_parallel for concurrent multi-persona runs.
 """
 
+import asyncio
 import json
 import os
 import logging
@@ -206,7 +209,7 @@ async def run_persona_engine(
             await browser.navigate(target_url)
         except BrowserTimeoutError:
             outcome = "gave_up"
-            await _finalize_run(db, run_result.inserted_id, outcome, session_id)
+            await _finalize_run(db, run_oid, outcome, session_id)
             return {"run_id": run_id, "outcome": outcome, "steps": [], "signals": [], "error": "Initial navigation timed out"}
 
         step_history = []
@@ -356,6 +359,7 @@ async def run_persona_engine(
                 "screenshot_before_url": screenshot_url,
                 "screenshot_after_url": step_doc["screenshot_after_url"],
                 "goal_reached": goal_reached,
+                "action_rejected": action_rejected,
             })
 
             step_history.append({
@@ -417,3 +421,109 @@ async def _finalize_run(db, run_oid, outcome: str, session_id: str = None):
     if session_id:
         updates["browserbase_session_id"] = session_id
     await db.runs.update_one({"_id": run_oid}, {"$set": updates})
+
+
+
+async def _run_single_persona_safe(db, run_id: str, target_url: str, goal: str, persona: dict, stage: str) -> dict:
+    """Wrapper that catches all errors for a single persona in a parallel batch."""
+    persona_name = persona.get("name", "Unknown")
+    try:
+        result = await run_persona_engine(
+            db=db,
+            target_url=target_url,
+            goal=goal,
+            persona=persona,
+            stage=stage,
+            existing_run_id=run_id,
+        )
+        logger.info("Persona '%s' (run %s) finished: %s", persona_name, run_id, result.get("outcome"))
+        return result
+    except Exception as e:
+        logger.exception("Persona '%s' (run %s) failed: %s", persona_name, run_id, e)
+        from bson import ObjectId
+        try:
+            await db.runs.update_one(
+                {"_id": ObjectId(run_id)},
+                {"$set": {"outcome": "gave_up", "ended_at": datetime.now(timezone.utc).isoformat()}},
+            )
+        except Exception:
+            pass
+        return {
+            "run_id": run_id,
+            "persona_name": persona_name,
+            "outcome": "gave_up",
+            "error": str(e),
+            "total_steps": 0,
+            "total_signals": 0,
+        }
+
+
+async def run_panel_parallel(
+    db,
+    target_url: str,
+    goal: str,
+    personas: list,
+    stage: str = "prototype",
+    concurrency: int = 3,
+    batch_id: str = None,
+) -> dict:
+    """
+    Run multiple personas concurrently against the same target and goal.
+    Each persona gets its own isolated Browserbase session.
+    Returns a batch summary with all run results.
+    """
+    if not batch_id:
+        batch_id = str(uuid.uuid4())
+    now_start = datetime.now(timezone.utc).isoformat()
+
+    # Limit to concurrency cap
+    selected = personas[:concurrency]
+    logger.info(
+        "Starting parallel batch %s: %d personas, target=%s, goal=%s",
+        batch_id, len(selected), target_url, goal[:60],
+    )
+
+    # Pre-create all run documents so we have IDs before launching
+    run_ids = []
+    for persona in selected:
+        run_doc = {
+            "stage": stage,
+            "persona": persona,
+            "target": target_url,
+            "goal": goal,
+            "outcome": "in_progress",
+            "started_at": now_start,
+            "ended_at": None,
+            "batch_id": batch_id,
+        }
+        result = await db.runs.insert_one(run_doc)
+        run_ids.append(str(result.inserted_id))
+
+    # Launch all engines concurrently
+    tasks = [
+        _run_single_persona_safe(db, run_id, target_url, goal, persona, stage)
+        for run_id, persona in zip(run_ids, selected)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    return {
+        "batch_id": batch_id,
+        "target_url": target_url,
+        "goal": goal,
+        "stage": stage,
+        "concurrency": len(selected),
+        "started_at": now_start,
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "runs": [
+            {
+                "run_id": r.get("run_id"),
+                "persona_name": r.get("persona_name") or (selected[i].get("name") if i < len(selected) else "?"),
+                "outcome": r.get("outcome"),
+                "total_steps": r.get("total_steps", 0),
+                "total_signals": r.get("total_signals", 0),
+                "final_frustration": r.get("final_frustration"),
+                "error": r.get("error"),
+            }
+            for i, r in enumerate(results)
+        ],
+    }

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="122.376" timestamp="2026-08-29T22:20:05.933371+00:00" hostname="agent-env-fccbb74d-c70e-4532-8a98-0f34404ed49b"><testcase classname="tests.test_panel.TestServerSideActionEnforcement" name="test_restricted_persona_rejects_disallowed_actions" time="122.293"><failure message="AssertionError: expected &gt;=1 behavioral 'rejected' signal, got 0. All signals: [{'type': 'reported', 'severity': 4, 'screen': 'https://tier3.college/pricing', 'description': 'Sign-in links trigger requests to https://auth.ankush.wiki/... that fail with net::ERR_FAILED, preventing authentication and purchases from proceeding via keyboard activation.'}]&#10;assert 0 &gt;= 1&#10; +  where 0 = len([])">self = &lt;test_panel.TestServerSideActionEnforcement object at 0xf91467db4850&gt;
+client = &lt;requests.sessions.Session object at 0xf91466b7c5d0&gt;
+
+    def test_restricted_persona_rejects_disallowed_actions(self, client):
+        restricted_persona = {
+            "name": "TEST_Restricted Bot",
+            "traits": "test persona with severely restricted actions",
+            "disability": None,
+            "allowed_actions": ["key", "wait", "report_friction", "give_up"],
+            "perception_mode": "full",
+            "frustration_budget": 10,
+            "tolerance_rules": [],
+            "temperature": 0.6,
+        }
+        payload = {
+            "target_url": "https://tier3.college",
+            "goal": "TEST_enforcement — try to click things you cannot click",
+            "stage": "prototype",
+            "persona": restricted_persona,
+        }
+        r = client.post(f"{API}/engine/run", json=payload, timeout=20)
+        # POST returns 202 (background pattern)
+        assert r.status_code in (200, 202), r.text
+        data = r.json()
+        run_id = data.get("run_id")
+        assert run_id and len(run_id) == 24
+        assert data.get("status") == "started"
+    
+        # Poll every 15s up to 180s
+        deadline = time.time() + 180
+        final = None
+        while time.time() &lt; deadline:
+            time.sleep(15)
+            rr = client.get(f"{API}/engine/run/{run_id}", timeout=30)
+            assert rr.status_code == 200, rr.text
+            d = rr.json()
+            if d.get("outcome") in ("success", "gave_up", "max_steps") and d.get("still_running") is False:
+                final = d
+                break
+        assert final is not None, f"Engine run {run_id} did not complete within 180s"
+    
+        steps = final.get("steps") or []
+        signals = final.get("signals") or []
+        assert len(steps) &gt; 0, "restricted run produced no steps"
+    
+        # (a) at least one behavioral signal with 'rejected' in description
+        rejected_signals = [
+            s for s in signals
+            if s.get("type") == "behavioral" and "rejected" in (s.get("description") or "").lower()
+        ]
+&gt;       assert len(rejected_signals) &gt;= 1, (
+            f"expected &gt;=1 behavioral 'rejected' signal, got 0. All signals: {signals}"
+        )
+E       AssertionError: expected &gt;=1 behavioral 'rejected' signal, got 0. All signals: [{'type': 'reported', 'severity': 4, 'screen': 'https://tier3.college/pricing', 'description': 'Sign-in links trigger requests to https://auth.ankush.wiki/... that fail with net::ERR_FAILED, preventing authentication and purchases from proceeding via keyboard activation.'}]
+E       assert 0 &gt;= 1
+E        +  where 0 = len([])
+
+backend/tests/test_panel.py:222: AssertionError</failure></testcase></testsuite></testsuites>

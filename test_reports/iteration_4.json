@@ -1,0 +1,62 @@
+{
+  "summary": "Backend-only testing of the new parallel-panel engine + server-side action enforcement (motor/keyboard-only Arun, blind/screen-reader Meera). Wrote /app/backend/tests/test_panel.py with 9 pytest tests. 8/9 PASSED. The enforcement test (1 real engine POST) did not fail on code — it proved the LLM prompt is strong enough that GPT-5 never emits a disallowed action, so the server-side rejection code path in engine.py (lines 288-306) was not exercised at runtime. Test asserts on the rejection SIGNAL, which never got created because the LLM was fully compliant. Verified via GET /api/engine/batch/ddb4c7d5-4bd8-402d-86ac-94c43ee51169: 3 runs (Priya 9 steps, Arun 4 steps, Meera 11 steps), all completed, rejected_actions=0 for each. Verified seed panel: Arun has NO 'click' in allowed_actions + disability=motor; Meera HAS 'click' + perception_mode=ax_tree_only + disability=blind. Verified Arun's run 6a93590d9746e27fc9e34414 has 0 click actions and >=1 key action. Verified Meera's run 6a93590d9746e27fc9e34415 has >=1 click action. Regression on GET /api/health and GET /api/persona-panels passes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "engine.py action validation (lines 288-306)",
+        "issue": "Server-side rejection code path is correct by inspection but effectively unreachable in normal runs because the LLM system prompt already lists ALLOWED ACTIONS and GPT-5 respects it. In our restricted-persona run (allowed=['key','wait','report_friction','give_up']) GPT-5 emitted 15/15 compliant actions (14 key + 1 report_friction), so 0 rejection signals were created and rejected_actions=0. The safety-net logic exists but there is no automated regression test that actually exercises it. Suggest: add a unit test that calls the engine with a mocked LLM returning a disallowed action, or expose an internal dev-only hook to inject a synthetic bad action, so this important safety net doesn't silently regress."
+      },
+      {
+        "endpoint": "GET /api/engine/batch/{batch_id}",
+        "issue": "Uses uuid strings (36 chars, hyphenated) rather than ObjectIds — nonexistent batch id returns 404 correctly (empty cursor). No validation that batch_id is a well-formed uuid — arbitrary strings just return 404. Acceptable but a 400 for malformed input would be tidier."
+      },
+      {
+        "endpoint": "POST /api/engine/run",
+        "issue": "Now returns 202 Accepted (fixed from prior iteration's 200 recommendation) — good. But prior test file /app/backend/tests/test_engine.py still asserts status_code==200 on this endpoint (line 143 of test_engine.py). That prior suite will now fail against the current server. Recommend updating test_engine.py to accept 202."
+      },
+      {
+        "endpoint": "browser/cloudinary uploader",
+        "issue": "Log spam persists: 'Connection pool is full, discarding connection: api.cloudinary.com. Connection pool size: 1' during parallel runs. Non-fatal (uploads still succeed) but wasteful."
+      },
+      {
+        "endpoint": "startup/shutdown",
+        "issue": "Still using deprecated @app.on_event handlers; migrate to lifespan context manager."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_panel.py",
+    "/app/test_reports/pytest/panel_results.xml",
+    "/app/test_reports/pytest/panel_enforcement.xml"
+  ],
+  "action_items": [
+    "The server-side enforcement test failed to trigger a rejection at runtime because GPT-5 was 100% prompt-compliant. Two options for the main agent: (a) Accept this as evidence the prompt is effective and add a UNIT test with a mocked LLM to lock in the safety-net code path, OR (b) Weaken the ALLOWED ACTIONS section of the LLM prompt (or add an explicit 'try to click even when not allowed' user instruction path in a dev-only route) so the enforcement branch can be reproducibly exercised. Recommendation: (a) — do not weaken the production prompt.",
+    "Update /app/backend/tests/test_engine.py (from prior iteration) — its test_post_returns_run_id_immediately_seed_persona asserts status_code==200 but POST /api/engine/run now returns 202. That prior test will now fail.",
+    "Consider validating batch_id shape on GET /api/engine/batch/{batch_id} — arbitrary strings currently 404 rather than 400.",
+    "Bump the Cloudinary uploader HTTP connection-pool size (currently 1) to eliminate pool-full warnings during parallel batches.",
+    "Migrate FastAPI @app.on_event to lifespan context manager (deprecation warning)."
+  ],
+  "critical_code_review_comments": [
+    "engine.py run_persona_engine is ~270 lines and does perceive→think→act→record inline — the '3. VALIDATE' section should be extracted into a small validate_action(action, allowed_actions) -> (action, rejection_signal | None) helper so it can be unit-tested without spinning up Browserbase+LLM.",
+    "server.py has grown to ~885 lines (up from ~725). Still recommend splitting into models.py + routes/engine.py + routes/crud.py + seed.py before adding more endpoints — reviews and diffs are getting hard.",
+    "_batch_tasks is a second module-level dict alongside _engine_tasks — same single-worker constraint applies. Neither is cleaned up on graceful shutdown for panel runs (only single-engine tasks are cancelled in shutdown_db_client).",
+    "get_engine_batch_status counts rejected_actions with a regex on description ({'$regex': 'rejected'}). This is fragile — if a persona's reported friction happens to contain the word 'rejected' it will be counted. Prefer tagging rejection signals with a dedicated field like {'rejected_action': true} and query on that.",
+    "engine.py: after an action is rejected the loop still writes the OVERRIDDEN action (type=wait, duration_ms=500) as the step. That's OK for enforcement, but the step's action_rejected=true flag and the ORIGINAL requested action type are only preserved on the step doc — they are NOT exposed by GET /api/engine/run/{run_id} (only 'action' and 'action_result' are surfaced). Consider including action_rejected + original action in the run response.",
+    "engine.py has a 'else' branch on the for-loop (line 395) that sets outcome='max_steps' — clean, but subtle. Worth a comment."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_panel.py"
+  ],
+  "success_rate": {
+    "backend": "8/9 pytest passed (88.9%). The 1 failure is a testability limitation, not a bug — server-side enforcement code is correct by inspection but was not runtime-triggered because GPT-5 respected the prompt.",
+    "frontend": "not tested (backend-only request)"
+  },
+  "test_credentials": "n/a (no auth in app)",
+  "seed_data_creation": "Exactly one ephemeral run POSTed to /api/engine/run with a restricted TEST_Restricted Bot persona (allowed_actions=['key','wait','report_friction','give_up']). Run id 6a935b179505002aedc743d7 — completed with outcome=max_steps, 15 steps (14 key + 1 report_friction), 1 signal (reported friction about auth.ankush.wiki net::ERR_FAILED). No test data left in an unclean state; run doc is fine to keep for inspection or delete via DELETE /api/runs/6a935b179505002aedc743d7. Pre-existing batch ddb4c7d5-4bd8-402d-86ac-94c43ee51169 and its 3 runs were only READ.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run test_panel.py serially: `REACT_APP_BACKEND_URL=... pytest backend/tests/test_panel.py -n 0`. pytest.ini forces `-n 2 --dist loadscope` so always pass `-n 0`. The enforcement test (TestServerSideActionEnforcement) takes ~120s and consumes real Browserbase+Cloudinary+GPT-5 — deselect it with `-k 'not enforcement'` unless you specifically need to re-verify. GPT-5 has proven to be fully prompt-compliant even with heavily restricted allowed_actions — expect rejected_actions=0 on future restricted runs. To actually exercise the engine.py:288 rejection branch, either mock the LLM at unit-test level or ask main agent to add a dev-only route that injects a synthetic disallowed action. Pre-completed test IDs still valid: batch ddb4c7d5-4bd8-402d-86ac-94c43ee51169, Arun run 6a93590d9746e27fc9e34414, Meera run 6a93590d9746e27fc9e34415, Priya (single) 6a9352683b24d270e9e8be86.",
+  "rca of the issue": "The single failing assertion was: expected >=1 behavioral 'rejected' signal, got 0. Root cause is NOT a bug in engine.py — the '3. VALIDATE' section correctly inserts a behavioral signal with 'rejected' in the description whenever action_type is not in the persona's allowed_actions set. What actually happened: our restricted persona had allowed_actions=['key','wait','report_friction','give_up'] and _build_system_prompt lists these under 'ALLOWED ACTIONS' in the system message. GPT-5 respected that list perfectly across all 15 steps — 14 key actions + 1 report_friction — so action_type was never outside the allowed set, and the rejection branch never fired. Mitigation: (a) add a unit test that constructs a fake action dict {'type':'click',...} and passes it through a refactored validate_action() helper — this locks in the safety net without needing a real Browserbase session; (b) alternatively, override the LLM response with a monkey-patch in a dev/test environment so the engine sees a disallowed action come back."
+}
