@@ -1,10 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { NAV } from "@/constants/testIds";
-import { Grid3X3, Users, FileText, GitCompareArrows, Play } from "lucide-react";
+import { Grid3X3, Users, FileText, GitCompareArrows, Play, Sparkles, Layers } from "lucide-react";
 
 const navItems = [
   { to: "/", label: "Live Grid", icon: Grid3X3, testId: NAV.liveGrid },
   { to: "/persona-panels", label: "Persona Panels", icon: Users, testId: NAV.personaPanels },
+  { to: "/generate-panel", label: "Generate", icon: Sparkles, testId: "nav-generate-panel" },
+  { to: "/prototype", label: "Prototype", icon: Layers, testId: "nav-prototype" },
   { to: "/reports", label: "Reports", icon: FileText, testId: NAV.reports },
   { to: "/cross-stage-diff", label: "Cross-Stage Diff", icon: GitCompareArrows, testId: NAV.crossStageDiff },
   { to: "/new-run", label: "New Run", icon: Play, testId: NAV.newRun },

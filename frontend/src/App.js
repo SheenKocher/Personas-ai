@@ -7,6 +7,8 @@ import PersonaPanels from "@/pages/PersonaPanels";
 import NewRun from "@/pages/NewRun";
 import Reports from "@/pages/Reports";
 import CrossStageDiff from "@/pages/CrossStageDiff";
+import GeneratePanel from "@/pages/GeneratePanel";
+import PrototypeStudio from "@/pages/PrototypeStudio";
 
 function App() {
   return (
@@ -26,7 +28,9 @@ function App() {
         <Route element={<Layout />}>
           <Route index element={<LiveGrid />} />
           <Route path="persona-panels" element={<PersonaPanels />} />
+          <Route path="generate-panel" element={<GeneratePanel />} />
           <Route path="new-run" element={<NewRun />} />
+          <Route path="prototype" element={<PrototypeStudio />} />
           <Route path="reports" element={<Reports />} />
           <Route path="cross-stage-diff" element={<CrossStageDiff />} />
         </Route>

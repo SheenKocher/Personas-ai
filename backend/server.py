@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, UploadFile, File as FastAPIFile
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -487,6 +487,213 @@ async def get_engine_batch_status(batch_id: str):
     }
 
 
+# --- Persona Generator ---
+
+class GeneratePersonasRequest(BaseModel):
+    audience_description: str
+    count: int = Field(default=4, ge=3, le=5)
+
+@api_router.post("/generate-personas")
+async def generate_personas_endpoint(body: GeneratePersonasRequest):
+    from generator import generate_personas
+    try:
+        result = await generate_personas(
+            audience_description=body.audience_description,
+            count=body.count,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Persona generation failed")
+        raise HTTPException(500, detail=str(e))
+
+
+# --- Prototype: Screen Graphs + Engine ---
+
+class ScreenNode(BaseModel):
+    id: str
+    name: str
+    image_url: str = ""
+
+class TransitionEdge(BaseModel):
+    from_screen: str
+    label: str
+    to_screen: str
+
+class ScreenGraphCreate(BaseModel):
+    name: str
+    screens: List[ScreenNode] = []
+    transitions: List[TransitionEdge] = []
+    start_screen: str = ""
+
+class ScreenGraphUpdate(BaseModel):
+    name: Optional[str] = None
+    screens: Optional[List[ScreenNode]] = None
+    transitions: Optional[List[TransitionEdge]] = None
+    start_screen: Optional[str] = None
+
+class PrototypeRunRequest(BaseModel):
+    graph_id: str
+    goal: str = "Find the pricing page"
+    persona_panel_id: Optional[str] = None
+    persona_indices: Optional[List[int]] = None
+    concurrency: int = 3
+
+@api_router.post("/prototype/graphs")
+async def create_screen_graph(body: ScreenGraphCreate):
+    doc = {
+        "name": body.name,
+        "screens": [s.model_dump() for s in body.screens],
+        "transitions": [t.model_dump() for t in body.transitions],
+        "start_screen": body.start_screen,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.screen_graphs.insert_one(doc)
+    doc["id"] = str(result.inserted_id)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+@api_router.get("/prototype/graphs")
+async def list_screen_graphs():
+    cursor = db.screen_graphs.find().sort("created_at", -1)
+    docs = await cursor.to_list(50)
+    return [
+        {**{k: v for k, v in d.items() if k != "_id"}, "id": str(d["_id"])}
+        for d in docs
+    ]
+
+@api_router.get("/prototype/graphs/{graph_id}")
+async def get_screen_graph(graph_id: str):
+    try:
+        oid = ObjectId(graph_id)
+    except Exception:
+        raise HTTPException(400, "Invalid graph ID")
+    doc = await db.screen_graphs.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(404, "Screen graph not found")
+    return {**{k: v for k, v in doc.items() if k != "_id"}, "id": str(doc["_id"])}
+
+@api_router.patch("/prototype/graphs/{graph_id}")
+async def update_screen_graph(graph_id: str, body: ScreenGraphUpdate):
+    try:
+        oid = ObjectId(graph_id)
+    except Exception:
+        raise HTTPException(400, "Invalid graph ID")
+    updates = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.screens is not None:
+        updates["screens"] = [s.model_dump() for s in body.screens]
+    if body.transitions is not None:
+        updates["transitions"] = [t.model_dump() for t in body.transitions]
+    if body.start_screen is not None:
+        updates["start_screen"] = body.start_screen
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    await db.screen_graphs.update_one({"_id": oid}, {"$set": updates})
+    doc = await db.screen_graphs.find_one({"_id": oid})
+    return {**{k: v for k, v in doc.items() if k != "_id"}, "id": str(doc["_id"])}
+
+@api_router.delete("/prototype/graphs/{graph_id}")
+async def delete_screen_graph(graph_id: str):
+    try:
+        oid = ObjectId(graph_id)
+    except Exception:
+        raise HTTPException(400, "Invalid graph ID")
+    result = await db.screen_graphs.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Screen graph not found")
+    return {"deleted": True}
+
+@api_router.post("/prototype/upload-mockup")
+async def upload_mockup(file: UploadFile = FastAPIFile(...)):
+    """Upload a mockup image to Cloudinary, return the URL."""
+    import cloudinary
+    import cloudinary.uploader
+    import io
+
+    cloudinary.config(
+        cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+        api_key=os.environ.get("CLOUDINARY_API_KEY"),
+        api_secret=os.environ.get("CLOUDINARY_API_SECRET"),
+        secure=True,
+    )
+    contents = await file.read()
+    try:
+        result = cloudinary.uploader.upload(
+            io.BytesIO(contents),
+            folder="synthtest/mockups",
+            resource_type="image",
+        )
+        return {"url": result["secure_url"], "public_id": result["public_id"]}
+    except Exception as e:
+        raise HTTPException(502, detail=f"Cloudinary upload failed: {e}")
+
+# Background tasks for prototype runs
+_proto_batch_tasks: dict = {}
+
+async def _run_proto_background(batch_id, graph_id, goal, personas, concurrency):
+    from prototype_engine import run_prototype_panel
+    try:
+        return await run_prototype_panel(
+            db=db, graph_id=graph_id, goal=goal,
+            personas=personas, concurrency=concurrency, batch_id=batch_id,
+        )
+    except Exception as e:
+        logger.exception("Prototype batch %s failed", batch_id)
+        return {"batch_id": batch_id, "error": str(e)}
+    finally:
+        _proto_batch_tasks.pop(batch_id, None)
+
+@api_router.post("/prototype/run")
+async def prototype_run(body: PrototypeRunRequest):
+    """Start prototype persona runs against a screen graph."""
+    import uuid as _uuid
+
+    # Verify graph exists
+    try:
+        graph_doc = await db.screen_graphs.find_one({"_id": ObjectId(body.graph_id)})
+    except Exception:
+        raise HTTPException(400, "Invalid graph_id")
+    if not graph_doc:
+        raise HTTPException(404, "Screen graph not found")
+
+    # Resolve personas
+    if body.persona_panel_id:
+        try:
+            panel = await db.persona_panels.find_one({"_id": ObjectId(body.persona_panel_id)})
+        except Exception:
+            raise HTTPException(400, "Invalid persona_panel_id")
+        if not panel:
+            raise HTTPException(404, "Persona panel not found")
+        all_personas = panel.get("personas", [])
+    else:
+        seed = await db.persona_panels.find_one({"client_ref": "seed-demo"})
+        if not seed:
+            raise HTTPException(400, "No panel found")
+        all_personas = seed.get("personas", [])
+
+    if body.persona_indices:
+        selected = [all_personas[i] for i in body.persona_indices if i < len(all_personas)]
+    else:
+        selected = all_personas[:body.concurrency]
+
+    if not selected:
+        raise HTTPException(400, "No personas selected")
+
+    batch_id = str(_uuid.uuid4())
+    task = _asyncio.create_task(
+        _run_proto_background(batch_id, body.graph_id, body.goal, selected, body.concurrency)
+    )
+    _proto_batch_tasks[batch_id] = task
+
+    return JSONResponse(status_code=202, content={
+        "batch_id": batch_id,
+        "status": "started",
+        "stage": "prototype",
+        "persona_count": len(selected),
+        "personas": [p.get("name", "?") for p in selected],
+    })
+
+
 # --- Signal Aggregation ---
 
 @api_router.get("/signals/aggregate")
@@ -942,4 +1149,7 @@ async def shutdown_db_client():
     for batch_id, task in list(_batch_tasks.items()):
         task.cancel()
     _batch_tasks.clear()
+    for batch_id, task in list(_proto_batch_tasks.items()):
+        task.cancel()
+    _proto_batch_tasks.clear()
     client.close()

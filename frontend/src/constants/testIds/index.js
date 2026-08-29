@@ -48,3 +48,17 @@ export const DIFF = {
   container: "cross-stage-diff-container",
   emptyState: "cross-stage-diff-empty-state",
 };
+
+export const GENERATE = {
+  container: "generate-panel-container",
+  audienceInput: "generate-audience-input",
+  countSelect: "generate-count-select",
+  generateBtn: "generate-btn",
+  saveBtn: "generate-save-btn",
+  clientRefInput: "generate-client-ref-input",
+  personaCard: "generate-persona-card",
+  personaName: "generate-persona-name",
+  personaTraits: "generate-persona-traits",
+  removePersona: "generate-remove-persona",
+  actionToggle: "generate-action-toggle",
+};

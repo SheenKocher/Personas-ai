@@ -34,4 +34,15 @@ export const deletePersonaPanel = (id) => api.delete(`/persona-panels/${id}`).th
 // --- Seed ---
 export const seedData = () => api.post("/seed").then((r) => r.data);
 
+// --- Persona Generator ---
+export const generatePersonas = (data) => api.post("/generate-personas", data).then((r) => r.data);
+
+// --- Prototype ---
+export const listScreenGraphs = () => api.get("/prototype/graphs").then((r) => r.data);
+export const getScreenGraph = (id) => api.get(`/prototype/graphs/${id}`).then((r) => r.data);
+export const createScreenGraph = (data) => api.post("/prototype/graphs", data).then((r) => r.data);
+export const updateScreenGraph = (id, data) => api.patch(`/prototype/graphs/${id}`, data).then((r) => r.data);
+export const deleteScreenGraph = (id) => api.delete(`/prototype/graphs/${id}`).then((r) => r.data);
+export const runPrototype = (data) => api.post("/prototype/run", data);
+
 export default api;

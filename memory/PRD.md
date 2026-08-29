@@ -1,52 +1,42 @@
 # SynthTest — Synthetic User Testing Tool
 
-## Problem Statement
-Build a FastAPI + MongoDB backend with a React frontend for a synthetic-user testing tool with persona engine, signal derivation, and cross-persona aggregation.
-
 ## Architecture
-- **Backend**: FastAPI on port 8001, MongoDB via motor
-- **Frontend**: React (CRA) with Tailwind CSS, shadcn/ui, dark control-room theme
-- **External services**: Browserbase (remote browser), Cloudinary (screenshots), OpenAI GPT-5 via Emergent LLM key
-- **Modules**: browser.py (CDP), engine.py (agent loop), signals.py (derivation + aggregation)
+- **Backend**: FastAPI on port 8001, MongoDB via motor, 5+ modules
+- **Frontend**: React (CRA), Tailwind CSS, shadcn/ui, dark control-room theme
+- **External**: Browserbase (remote browser), Cloudinary (screenshots/mockups), GPT-5 via Emergent LLM key (text + vision)
+- **Modules**: browser.py, engine.py, prototype_engine.py, signals.py, generator.py, ws_manager.py
+
+## Collections
+runs, steps, signals, persona_panels, screen_graphs
 
 ## What's Been Implemented
+1. Schema + CRUD + UI (4 collections, 5 pages, seed data)
+2. Browserbase spike (remote browser CDP, Cloudinary)
+3. Persona engine (perceive→think→act→record, GPT-5, background with polling)
+4. Parallel orchestrator (asyncio.gather, 3 concurrent, disability personas)
+5. Signal derivation (objective: console/network errors; behavioral: revisits, path length, dead-clicks, keyboard dead-ends)
+6. Aggregation endpoint (weighted score by screen)
+7. Persona generator (LLM-powered, editable cards UI)
+8. Panel editor redesign (inline-editable cards, constraint summaries, action chips)
+9. **Prototype stage** (NEW):
+   - Screen graph model: screens (id, name, image_url) + transitions (from, label, to)
+   - GPT-5 vision: analyzes mockup images via ImageContent
+   - Intent-based actions matched against labeled transitions
+   - Dead-ends = friction signals (like 404 in runtime)
+   - stage=prototype runs with SAME schema as runtime
+   - Upload mockup → Cloudinary, CRUD for graphs
+   - Prototype Studio UI: screen cards with upload zones, transition editor, run config
 
-### Phase 1 — Schema + CRUD + UI
-- 4 MongoDB collections with full CRUD, seed data (7 personas), 5 frontend pages
-
-### Phase 2 — Browserbase Spike
-- Remote browser via CDP, Cloudinary upload
-
-### Phase 3 — Persona Engine
-- Stage-agnostic agent loop: perceive → think (GPT-5) → act → record → repeat
-- Background execution with polling (202 Accepted)
-
-### Phase 4 — Parallel Orchestrator + Disability Personas
-- POST /api/engine/run-panel: runs N personas concurrently (max 3)
-- Keyboard-only (motor) + screen-reader (blind) personas
-- Server-side action enforcement with 8/8 unit tests
-
-### Phase 5 — Signal Derivation + Aggregation
-- **Objective signals**: console errors (sev by type), failed requests (sev: 5xx=4, 404=3, 4xx=2)
-- **Behavioral signals**: state revisits (sev 2/3), excessive path length, dead-clicks, keyboard dead-ends (motor-only, 2+ consecutive key presses stuck)
-- `POST /api/signals/derive/{run_id}`: manual derivation trigger
-- `GET /api/signals/aggregate?batch_id=X`: ranked worst screens, weighted by frequency × severity
-- Signal sources: console_error, failed_request, state_revisit, path_length, dead_click, keyboard_dead_end, action_rejected, persona_report, frustration_budget
-- Verified: /pricing ranked #1 worst screen (score 89.0), keyboard dead-end detected for Arun
-- 13/13 tests passing
-
-## Test Results Summary
-- Phase 1-5: 55+ tests total, all passing
-- Key verified: aggregation correctly ranks /pricing as worst screen across all personas in batch
+## Test Results: 14/14 backend + 100% frontend (iteration 8)
+## Total: 70+ tests across all iterations
 
 ## Prioritized Backlog
 ### P1 (Next)
-- Wire engine + aggregation to frontend (run detail page, signal dashboard)
-- Reports page: render aggregation results as ranked screen cards
+- Wire WebSocket to broadcast step updates for live grid
 - Cross-Stage Diff: compare prototype vs runtime signal aggregations
+- Reports page: render aggregation data
 
 ### P2
-- Real-time run progress via SSE/WebSocket
-- Concurrent panel runs with 5+ personas
-- Friction heatmap visualization
-- Export signals as CSV/JSON report
+- Real-time grid with live screenshot updates
+- Concurrent 5+ personas
+- Export signals/reports as CSV
