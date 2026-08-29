@@ -1,0 +1,41 @@
+{
+  "summary": "Backend testing of signal derivation and aggregation endpoints. Created /app/backend/tests/test_signals.py with 13 test cases covering derivation (fresh run, invalid_id 400, nonexistent 404), aggregation (batch_id, run_ids CSV, missing params 400, sort order, /pricing top rank), specific signal detection (Arun keyboard_dead_end, Meera dead_click), and sanity endpoints (/api/health, /api/persona-panels). All 13 tests PASS against production URL. Verified: /pricing is top-ranked screen (weighted_score=89.0) in batch ddb4c7d5..., Arun's run has keyboard_dead_end signal, Meera's run has dead_click signal, fresh run derivation returns properly shaped signals (type/severity/source/description). Found one potential minor issue: GET /api/signals list endpoint strips the 'source' and 'count' fields from responses because the Signal Pydantic model (server.py L127-133) doesn't include them — DB has the data, only serialization drops it. Aggregation endpoint (which reads raw DB) works correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/signals",
+        "issue": "Signal Pydantic model (server.py:127) lacks 'source' and 'count' fields, so list_signals/get_signal responses strip these fields from derived signals even though they exist in DB. This makes it impossible for API consumers to filter/inspect signals by source (console_error, keyboard_dead_end, etc.) via the list endpoint. Aggregate endpoint bypasses the model and works fine."
+      },
+      {
+        "endpoint": "GET /api/signals/aggregate",
+        "issue": "Some /pricing signals show source='unknown' in by_source (3 of 7). Likely engine-emitted signals (e.g., action rejections) that don't set the 'source' field. Consider setting a default source like 'engine' or 'action_rejected' in engine.py to improve aggregation grouping."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_signals.py",
+    "/app/test_reports/pytest/signals_results.xml"
+  ],
+  "action_items": [
+    "Add 'source: Optional[str] = None' and 'count: Optional[int] = 1' to Signal Pydantic model in /app/backend/server.py (line 127) so list/get endpoints expose these fields.",
+    "Consider setting a 'source' field on engine-emitted signals (action rejections, etc.) so they aggregate under a named source rather than 'unknown'."
+  ],
+  "critical_code_review_comments": [
+    "Signal model schema drift: signals.py writes 'source' and 'count' to DB but the Signal Pydantic model in server.py doesn't declare them → data invisible via GET /api/signals. Fix by extending the model.",
+    "signals.py derive_all_signals inserts without dedup check — repeated POST /api/signals/derive/{run_id} calls will create duplicate rows in DB (as noted in review request itself). Consider deleting existing derived signals or upsert-by-key before inserting.",
+    "signals.py _get_signals_for_run cursor.to_list(50) hard-caps steps at 50; if a run has more steps this silently truncates. Consider using cursor.to_list(length=None) or a documented larger limit.",
+    "aggregate_signals_by_screen limits signals fetch to 5000 — no pagination and no warning if hit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_signals.py (created)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "n/a"},
+  "test_credentials": "none required",
+  "seed_data_creation": "None. Used existing runs: Priya=6a93590d9746e27fc9e34413, Arun=6a93590d9746e27fc9e34414, Meera=6a93590d9746e27fc9e34415, batch ddb4c7d5-4bd8-402d-86ac-94c43ee51169. Fresh derivation ran against 6a9343fa6fc2884898105256 or 6a9344228af8dbf43bc0fe19.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_signals.py is the regression suite for signal derivation/aggregation. All 13 tests pass. Note the Signal Pydantic model drift issue — if main agent fixes it, the list endpoint tests can be enhanced to verify source/count fields directly rather than routing through aggregate. Aggregation output snapshot: /pricing (score=89, 7 signals, sources: unknown×3, state_revisit×2, path_length×2), tier3.college root (score=30, 4 signals including keyboard_dead_end×1 and dead_click×1), /plans/guidance-pass (score=8, state_revisit×2).",
+  "rca of the issue": "N/A — no functional failures. Derivation logic matches spec: objective severities (console error=3, warning=1, 5xx=4, 404=3), behavioral (state_revisit sev 2 for 2x/3 for 3+x, path_length when steps>2×optimal, keyboard_dead_end at 2+ consecutive key presses on same screen for motor persona). All verified via passing tests plus aggregation snapshot."
+}

@@ -131,6 +131,8 @@ class Signal(BaseDocument):
     severity: int = Field(ge=1, le=5)
     screen: str = ""
     description: str = ""
+    source: Optional[str] = None
+    count: Optional[int] = 1
 
 class SignalCreate(BaseModel):
     run_id: str
@@ -139,6 +141,7 @@ class SignalCreate(BaseModel):
     severity: int = Field(ge=1, le=5)
     screen: str = ""
     description: str = ""
+    source: Optional[str] = None
 
 
 class PersonaPanel(BaseDocument):
@@ -481,6 +484,59 @@ async def get_engine_batch_status(batch_id: str):
         "all_done": all_done,
         "total_runs": len(run_summaries),
         "runs": run_summaries,
+    }
+
+
+# --- Signal Aggregation ---
+
+@api_router.get("/signals/aggregate")
+async def aggregate_signals(
+    batch_id: Optional[str] = None,
+    run_ids: Optional[str] = None,
+):
+    """
+    Aggregate signals by screen, weighted by frequency × severity.
+    Returns ranked list of worst screens.
+    Provide either batch_id or comma-separated run_ids.
+    """
+    from signals import aggregate_signals_by_screen
+
+    rid_list = None
+    if run_ids:
+        rid_list = [r.strip() for r in run_ids.split(",") if r.strip()]
+
+    if not batch_id and not rid_list:
+        raise HTTPException(400, "Provide batch_id or run_ids parameter")
+
+    result = await aggregate_signals_by_screen(db, batch_id=batch_id, run_ids=rid_list)
+    return {
+        "batch_id": batch_id,
+        "total_screens": len(result),
+        "screens": result,
+    }
+
+
+@api_router.post("/signals/derive/{run_id}")
+async def derive_signals_for_run(run_id: str):
+    """Manually trigger signal derivation for an existing run."""
+    from signals import derive_all_signals
+    try:
+        oid = ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+
+    run_doc = await db.runs.find_one({"_id": oid})
+    if not run_doc:
+        raise HTTPException(404, "Run not found")
+
+    persona = run_doc.get("persona", {})
+    stage = run_doc.get("stage", "prototype")
+
+    derived = await derive_all_signals(db, run_id, stage, persona)
+    return {
+        "run_id": run_id,
+        "derived_count": len(derived),
+        "signals": derived,
     }
 
 

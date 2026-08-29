@@ -296,6 +296,7 @@ async def run_persona_engine(
                     "severity": 2,
                     "screen": perception["current_url"],
                     "description": f"Action '{action_type}' rejected — not in persona's allowed_actions: {list(allowed_actions)}",
+                    "source": "action_rejected",
                 }
                 await db.signals.insert_one(rejection_signal.copy())
                 signals_out.append({k: v for k, v in rejection_signal.items() if k != "_id"})
@@ -315,6 +316,7 @@ async def run_persona_engine(
                     "severity": min(max(action.get("severity", 3), 1), 5),
                     "screen": perception["current_url"],
                     "description": action.get("description", "Friction reported by persona"),
+                    "source": "persona_report",
                 }
                 await db.signals.insert_one(friction_signal.copy())
                 signals_out.append({k: v for k, v in friction_signal.items() if k != "_id"})
@@ -338,6 +340,9 @@ async def run_persona_engine(
                 "action_rejected": action_rejected,
                 "frustration_at_step": frustration,
                 "llm_response_raw": llm_response_raw[:5000],
+                "console_errors": perception.get("console_errors", []),
+                "page_errors": perception.get("page_errors", []),
+                "failed_requests": perception.get("failed_requests", []),
             }
 
             # Take after-screenshot for non-meta actions
@@ -367,6 +372,7 @@ async def run_persona_engine(
                 "action_type": action_type,
                 "success": action_result["success"],
                 "error": action_result.get("error", ""),
+                "location": perception["current_url"],
             })
 
             # Update frustration
@@ -388,6 +394,7 @@ async def run_persona_engine(
                     "severity": 4,
                     "screen": perception["current_url"],
                     "description": f"Frustration budget exhausted ({frustration}/{frustration_budget})",
+                    "source": "frustration_budget",
                 }
                 await db.signals.insert_one(budget_signal.copy())
                 signals_out.append({k: v for k, v in budget_signal.items() if k != "_id"})
@@ -396,6 +403,11 @@ async def run_persona_engine(
         else:
             # Exhausted MAX_STEPS
             outcome = "max_steps"
+
+    # Derive objective and behavioral signals from step data
+    from signals import derive_all_signals
+    derived = await derive_all_signals(db, run_id, stage, persona)
+    signals_out.extend(derived)
 
     # Finalize run
     await _finalize_run(db, run_oid, outcome, session_id)
