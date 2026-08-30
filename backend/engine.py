@@ -219,7 +219,9 @@ async def run_persona_engine(
 
             # 1. PERCEIVE
             perception = await browser.perceive()
-            screenshot_url = await BrowserSession.upload_screenshot(perception["screenshot_bytes"])
+            # A failed screenshot upload must NOT kill the run — record the step
+            # without an image and keep going.
+            screenshot_url = await BrowserSession.upload_screenshot(perception["screenshot_bytes"]) or ""
 
             ax_text = _ax_tree_to_text(perception["ax_tree"], persona.get("perception_mode", "full"))
 

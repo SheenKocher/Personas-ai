@@ -263,16 +263,30 @@ class BrowserSession:
     # --- Cloudinary Upload ---
 
     @staticmethod
-    async def upload_screenshot(png_bytes: bytes) -> str:
-        """Upload screenshot to Cloudinary, return secure URL."""
-        try:
-            result = await asyncio.to_thread(
-                cloudinary.uploader.upload,
-                io.BytesIO(png_bytes),
-                folder="synthtest/screenshots",
-                resource_type="image",
-                format="png",
-            )
-            return result["secure_url"]
-        except Exception as e:
-            raise BrowserUpstreamError(f"Cloudinary upload failed: {e}") from e
+    async def upload_screenshot(png_bytes: bytes, retries: int = 3):
+        """
+        Upload screenshot to Cloudinary, return the secure URL.
+        Retries transient network failures (RemoteDisconnected, timeouts) with
+        backoff. Returns None if every attempt fails — the caller should record
+        the step without a screenshot rather than abort the whole run.
+        """
+        last_err = None
+        for attempt in range(retries):
+            try:
+                result = await asyncio.to_thread(
+                    cloudinary.uploader.upload,
+                    io.BytesIO(png_bytes),
+                    folder="synthtest/screenshots",
+                    resource_type="image",
+                    format="png",
+                )
+                return result["secure_url"]
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    "Cloudinary upload attempt %d/%d failed: %s", attempt + 1, retries, e
+                )
+                if attempt < retries - 1:
+                    await asyncio.sleep(1 + attempt * 2)  # 1s, 3s
+        logger.error("Cloudinary upload failed after %d attempts: %s", retries, last_err)
+        return None

@@ -54,7 +54,12 @@ async def consume_credit(db) -> bool:
     """
     Consume one run credit. Returns True if credit consumed, False if none available.
     First run is free (no credit needed). Subsequent runs consume a paid credit.
+
+    Set DISABLE_PAYWALL=1 in the environment (local dev) to bypass this entirely.
     """
+    if os.environ.get("DISABLE_PAYWALL", "").lower() in ("1", "true", "yes"):
+        return True
+
     total_runs = await db.runs.count_documents({"outcome": {"$ne": "in_progress"}})
 
     # First run is free
