@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 from browser import BrowserSession, BrowserUpstreamError, BrowserTimeoutError
+from ws_manager import broadcaster
+import run_control
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +148,17 @@ async def run_persona_engine(
     persona: dict,
     stage: str = "prototype",
     existing_run_id: str = None,
+    batch_id: str = None,
 ) -> dict:
     """
     Execute the full agent loop for one persona.
     Returns dict with run summary, steps, and signals.
     If existing_run_id is provided, uses that run document instead of creating a new one.
+
+    Registers a pause/resume control (run_control.py) under the run's ID for the
+    duration of the run — POST /api/engine/run/{id}/pause clears it, which the loop
+    awaits at the top of each step. A pause takes effect after the in-flight step
+    finishes, not mid-action.
     """
     run_id = None
     run_oid = None
@@ -186,6 +194,8 @@ async def run_persona_engine(
         run_id = str(run_result.inserted_id)
         run_oid = run_result.inserted_id
 
+    pause_event = run_control.register(run_id)
+
     # Initialize LLM chat — use Emergent key (universal access) with GPT-5
     system_prompt = _build_system_prompt(persona, goal, target_url)
     llm_key = os.environ.get("EMERGENT_LLM_KEY", os.environ.get("OPENAI_API_KEY", ""))
@@ -210,11 +220,20 @@ async def run_persona_engine(
         except BrowserTimeoutError:
             outcome = "gave_up"
             await _finalize_run(db, run_oid, outcome, session_id)
+            await broadcaster.send_run_complete(
+                batch_id=batch_id, run_id=run_id, persona_name=persona.get("name", "?"),
+                outcome=outcome, total_steps=0, total_signals=0,
+            )
+            run_control.discard(run_id)
             return {"run_id": run_id, "outcome": outcome, "steps": [], "signals": [], "error": "Initial navigation timed out"}
 
         step_history = []
 
         for step_index in range(MAX_STEPS):
+            # Block here (not mid-action) if paused. Doesn't burn LLM/browser calls.
+            if pause_event is not None:
+                await pause_event.wait()
+
             now_step = datetime.now(timezone.utc).isoformat()
 
             # 1. PERCEIVE
@@ -380,6 +399,22 @@ async def run_persona_engine(
             # Update frustration
             frustration += frustration_increase
 
+            # Push this step to any listening clients (Live Grid activity feed)
+            await broadcaster.send_step_update(
+                batch_id=batch_id,
+                run_id=run_id,
+                persona=persona,
+                step_index=step_index,
+                max_steps=MAX_STEPS,
+                action=action,
+                reasoning=reasoning,
+                screenshot_url=step_doc["screenshot_after_url"] or screenshot_url,
+                location=perception["current_url"],
+                outcome="success" if goal_reached else ("gave_up" if action_type == "give_up" else "in_progress"),
+                frustration=frustration,
+                frustration_budget=frustration_budget,
+            )
+
             # Check termination conditions
             if goal_reached:
                 outcome = "success"
@@ -414,6 +449,16 @@ async def run_persona_engine(
     # Finalize run
     await _finalize_run(db, run_oid, outcome, session_id)
 
+    await broadcaster.send_run_complete(
+        batch_id=batch_id,
+        run_id=run_id,
+        persona_name=persona.get("name", "?"),
+        outcome=outcome,
+        total_steps=len(steps_out),
+        total_signals=len(signals_out),
+    )
+    run_control.discard(run_id)
+
     return {
         "run_id": run_id,
         "outcome": outcome,
@@ -438,7 +483,7 @@ async def _finalize_run(db, run_oid, outcome: str, session_id: str = None):
 
 
 
-async def _run_single_persona_safe(db, run_id: str, target_url: str, goal: str, persona: dict, stage: str) -> dict:
+async def _run_single_persona_safe(db, run_id: str, target_url: str, goal: str, persona: dict, stage: str, batch_id: str = None) -> dict:
     """Wrapper that catches all errors for a single persona in a parallel batch."""
     persona_name = persona.get("name", "Unknown")
     try:
@@ -449,6 +494,7 @@ async def _run_single_persona_safe(db, run_id: str, target_url: str, goal: str, 
             persona=persona,
             stage=stage,
             existing_run_id=run_id,
+            batch_id=batch_id,
         )
         logger.info("Persona '%s' (run %s) finished: %s", persona_name, run_id, result.get("outcome"))
         return result
@@ -515,7 +561,7 @@ async def run_panel_parallel(
 
     # Launch all engines concurrently
     tasks = [
-        _run_single_persona_safe(db, run_id, target_url, goal, persona, stage)
+        _run_single_persona_safe(db, run_id, target_url, goal, persona, stage, batch_id)
         for run_id, persona in zip(run_ids, selected)
     ]
     results = await asyncio.gather(*tasks)

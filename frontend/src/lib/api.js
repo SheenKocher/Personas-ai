@@ -13,6 +13,9 @@ export const engineRun = (data) => api.post("/engine/run", data).then((r) => r.d
 export const getEngineRun = (id) => api.get(`/engine/run/${id}`).then((r) => r.data);
 // Embeddable Browserbase live-view URL for a running session.
 export const getRunLive = (id) => api.get(`/engine/run/${id}/live`).then((r) => r.data);
+// Pause/resume a running persona between steps.
+export const pauseRun = (id) => api.post(`/engine/run/${id}/pause`).then((r) => r.data);
+export const resumeRun = (id) => api.post(`/engine/run/${id}/resume`).then((r) => r.data);
 export const listRuns = (params) => api.get("/runs", { params }).then((r) => r.data);
 export const getRun = (id) => api.get(`/runs/${id}`).then((r) => r.data);
 export const updateRun = (id, data) => api.patch(`/runs/${id}`, data).then((r) => r.data);

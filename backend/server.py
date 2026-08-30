@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query, UploadFile, File as FastAPIFile
+from fastapi import FastAPI, APIRouter, HTTPException, Query, UploadFile, File as FastAPIFile, WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -14,6 +14,8 @@ from bson.errors import InvalidId
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+from ws_manager import broadcaster
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -434,39 +436,44 @@ async def get_engine_run_status(run_id: str):
         "browserbase_session_id": run_doc.get("browserbase_session_id"),
         "persona": run_doc.get("persona"),
         "still_running": run_id in _engine_tasks,
+        "paused": run_doc.get("paused", False),
         "error": run_doc.get("error"),
     }
 
-    # If completed, include steps and signals
-    if run_doc.get("outcome") != "in_progress" or run_id not in _engine_tasks:
-        steps_cursor = db.steps.find({"run_id": run_id}).sort("index", 1)
-        steps = await steps_cursor.to_list(50)
-        signals_cursor = db.signals.find({"run_id": run_id}).sort("severity", -1)
-        signals = await signals_cursor.to_list(50)
+    # Always include steps/signals so far — the live activity feed backfills from
+    # this on open (whether the run is still in progress or already finished),
+    # then subscribes to the WS for anything after.
+    steps_cursor = db.steps.find({"run_id": run_id}).sort("index", 1)
+    steps = await steps_cursor.to_list(50)
+    signals_cursor = db.signals.find({"run_id": run_id}).sort("severity", -1)
+    signals = await signals_cursor.to_list(50)
 
-        run_data["steps"] = [
-            {
-                "index": s.get("index"),
-                "action": s.get("action"),
-                "reasoning": s.get("reasoning", "")[:300],
-                "screenshot_before_url": s.get("screenshot_before_url"),
-                "screenshot_after_url": s.get("screenshot_after_url"),
-                "location": s.get("location"),
-                "action_result": s.get("action_result"),
-            }
-            for s in steps
-        ]
-        run_data["signals"] = [
-            {
-                "type": sig.get("type"),
-                "severity": sig.get("severity"),
-                "screen": sig.get("screen"),
-                "description": sig.get("description"),
-            }
-            for sig in signals
-        ]
-        run_data["total_steps"] = len(steps)
-        run_data["total_signals"] = len(signals)
+    run_data["steps"] = [
+        {
+            "index": s.get("index"),
+            "action": s.get("action"),
+            "reasoning": s.get("reasoning", "")[:300],
+            "screenshot_before_url": s.get("screenshot_before_url"),
+            "screenshot_after_url": s.get("screenshot_after_url"),
+            "location": s.get("location"),
+            "action_result": s.get("action_result"),
+            "action_rejected": s.get("action_rejected", False),
+            "frustration_at_step": s.get("frustration_at_step"),
+            "timestamp": s.get("timestamp"),
+        }
+        for s in steps
+    ]
+    run_data["signals"] = [
+        {
+            "type": sig.get("type"),
+            "severity": sig.get("severity"),
+            "screen": sig.get("screen"),
+            "description": sig.get("description"),
+        }
+        for sig in signals
+    ]
+    run_data["total_steps"] = len(steps)
+    run_data["total_signals"] = len(signals)
 
     return run_data
 
@@ -516,6 +523,67 @@ async def get_engine_run_live_view(run_id: str):
         logger.warning("Browserbase debug() failed for session %s: %s", session_id, e)
         # Session likely already ended between our DB read and this call.
         return {"status": "ended", "run_id": run_id, "session_id": session_id, "replay_url": replay_url}
+
+
+@api_router.post("/engine/run/{run_id}/pause")
+async def pause_engine_run(run_id: str):
+    """Pause a running persona between steps. Takes effect after the in-flight step finishes."""
+    import run_control
+    try:
+        oid = ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+
+    run_doc = await db.runs.find_one({"_id": oid})
+    if not run_doc:
+        raise HTTPException(404, "Run not found")
+    if run_doc.get("outcome") != "in_progress":
+        raise HTTPException(409, "Run has already finished")
+
+    if not run_control.pause(run_id):
+        raise HTTPException(409, "Run is not currently active")
+
+    await db.runs.update_one({"_id": oid}, {"$set": {"paused": True}})
+    await broadcaster.broadcast({"type": "run_paused", "run_id": run_id})
+    return {"run_id": run_id, "paused": True}
+
+
+@api_router.post("/engine/run/{run_id}/resume")
+async def resume_engine_run(run_id: str):
+    """Resume a paused persona run."""
+    import run_control
+    try:
+        oid = ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+
+    run_doc = await db.runs.find_one({"_id": oid})
+    if not run_doc:
+        raise HTTPException(404, "Run not found")
+    if run_doc.get("outcome") != "in_progress":
+        raise HTTPException(409, "Run has already finished")
+
+    if not run_control.resume(run_id):
+        raise HTTPException(409, "Run is not currently active")
+
+    await db.runs.update_one({"_id": oid}, {"$set": {"paused": False}})
+    await broadcaster.broadcast({"type": "run_resumed", "run_id": run_id})
+    return {"run_id": run_id, "paused": False}
+
+
+@app.websocket("/api/ws/runs")
+async def ws_runs(ws: WebSocket):
+    """Live feed of step_update / run_complete / run_paused / run_resumed events."""
+    await broadcaster.connect(ws)
+    try:
+        while True:
+            # Client doesn't send anything meaningful — just keep the socket open
+            # and notice disconnects.
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.disconnect(ws)
 
 
 # --- Parallel Panel Engine ---
