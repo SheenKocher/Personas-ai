@@ -175,13 +175,25 @@ app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
 
-# --- Health ---
+# --- Root & Health (both root level and /api prefix for Render compatibility) ---
+
+@app.get("/")
+@app.head("/")
+async def root_app():
+    return {"message": "Synthetic User Testing API", "status": "ok"}
+
+@app.get("/health")
+@app.head("/health")
+async def health_app():
+    return {"status": "ok"}
 
 @api_router.get("/")
+@api_router.head("/")
 async def root():
     return {"message": "Synthetic User Testing API"}
 
 @api_router.get("/health")
+@api_router.head("/health")
 async def health():
     return {"status": "ok"}
 
