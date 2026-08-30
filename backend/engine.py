@@ -21,7 +21,10 @@ import run_control
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 15
+# Hard cap on agent steps per run. Most single-goal tasks finish in 3-8 steps;
+# the extra headroom covers exploration, backtracking and dead ends before we
+# call it. Override with MAX_STEPS in the environment for long flows / demos.
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "25"))
 
 
 def _build_system_prompt(persona: dict, goal: str, target_url: str) -> str:

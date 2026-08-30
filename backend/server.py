@@ -303,10 +303,11 @@ class EngineRunRequest(BaseModel):
 import asyncio as _asyncio
 _engine_tasks: dict = {}  # run_id -> asyncio.Task
 
-# Hard ceiling for a single engine run. 15 steps * (LLM call + browser actions +
-# screenshot uploads) — if it exceeds this, something is hung (LLM/CDP with no
-# timeout) and the run must be force-finalized so it can't show "Running" forever.
-ENGINE_RUN_TIMEOUT_S = 1200
+# Wall-clock ceiling for a single engine run. Each step is one LLM call + browser
+# actions + screenshot uploads (~15-20s). At the default 25-step cap a normal run
+# is well under this; if it exceeds, something is hung (LLM/CDP with no timeout)
+# and the run is force-finalized so it can't show "Running" forever.
+ENGINE_RUN_TIMEOUT_S = int(os.environ.get("ENGINE_RUN_TIMEOUT_S", "1800"))
 
 
 async def _mark_run_gave_up(run_id: str, reason: str):
