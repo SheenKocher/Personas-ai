@@ -13,6 +13,11 @@ export const engineRun = (data) => api.post("/engine/run", data).then((r) => r.d
 export const getEngineRun = (id) => api.get(`/engine/run/${id}`).then((r) => r.data);
 // Embeddable Browserbase live-view URL for a running session.
 export const getRunLive = (id) => api.get(`/engine/run/${id}/live`).then((r) => r.data);
+// LLM-generated developer-facing report.
+export const getRunReport = (id, refresh) =>
+  api.get(`/reports/run/${id}`, { params: refresh ? { refresh: true } : {} }).then((r) => r.data);
+export const getBatchReport = (id, refresh) =>
+  api.get(`/reports/batch/${id}`, { params: refresh ? { refresh: true } : {} }).then((r) => r.data);
 export const listRuns = (params) => api.get("/runs", { params }).then((r) => r.data);
 export const getRun = (id) => api.get(`/runs/${id}`).then((r) => r.data);
 export const updateRun = (id, data) => api.patch(`/runs/${id}`, data).then((r) => r.data);

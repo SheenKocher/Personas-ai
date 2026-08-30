@@ -932,6 +932,36 @@ async def aggregate_signals(
     }
 
 
+@api_router.get("/reports/run/{run_id}")
+async def get_run_report(run_id: str, refresh: bool = False):
+    """Developer-facing narrative report for a single run (LLM-generated, cached on the run)."""
+    from reporter import generate_run_report
+    try:
+        ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+    try:
+        return await generate_run_report(db, run_id, refresh=refresh)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.exception("Run report generation failed for %s", run_id)
+        raise HTTPException(502, f"Report generation failed: {e}")
+
+
+@api_router.get("/reports/batch/{batch_id}")
+async def get_batch_report(batch_id: str, refresh: bool = False):
+    """Developer-facing narrative report synthesized across all runs in a batch."""
+    from reporter import generate_batch_report
+    try:
+        return await generate_batch_report(db, batch_id, refresh=refresh)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.exception("Batch report generation failed for %s", batch_id)
+        raise HTTPException(502, f"Report generation failed: {e}")
+
+
 @api_router.post("/signals/derive/{run_id}")
 async def derive_signals_for_run(run_id: str):
     """Manually trigger signal derivation for an existing run."""
