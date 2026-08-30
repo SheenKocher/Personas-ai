@@ -11,6 +11,14 @@ import {
 import { toast } from "sonner";
 import { Spinner, ErrorBanner } from "@/components/shared";
 
+function FieldLabel({ children }) {
+  return (
+    <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>
+      {children}<span style={{ color: "#F43F5E" }}> *</span>
+    </label>
+  );
+}
+
 export default function NewRun() {
   const navigate = useNavigate();
   const [panels, setPanels] = useState([]);
@@ -42,25 +50,33 @@ export default function NewRun() {
       ? selectedPanel.personas[parseInt(form.persona_index)]
       : null;
 
+  // Every field must be filled before a run can start.
+  const isComplete =
+    form.target.trim() !== "" &&
+    form.goal.trim() !== "" &&
+    form.stage !== "" &&
+    form.panel_id !== "" &&
+    form.persona_index !== "";
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.target || !form.stage) {
-      toast.error("Target URL and stage are required");
+    if (!isComplete) {
+      toast.error("Fill in every field before starting a run");
       return;
     }
     setSubmitting(true);
     try {
       let target = form.target.trim();
-      if (form.stage === "runtime" && target && !/^https?:\/\//i.test(target)) {
+      if (form.stage === "runtime" && !/^https?:\/\//i.test(target)) {
         target = `https://${target}`;
       }
       await engineRun({
         target_url: target,
-        goal: form.goal,
+        goal: form.goal.trim(),
         stage: form.stage,
         persona: selectedPersona || null,
-        persona_panel_id: form.panel_id || null,
-        persona_index: form.persona_index === "" ? 0 : parseInt(form.persona_index),
+        persona_panel_id: form.panel_id,
+        persona_index: parseInt(form.persona_index),
       });
       toast.success("Run started");
       navigate("/");
@@ -82,6 +98,7 @@ export default function NewRun() {
 
   const inputStyle = { background: "#0B0F1A", border: "0.5px solid #334155", color: "#F1F5F9" };
   const dropdownStyle = { background: "#141B2E", border: "0.5px solid #1E293B" };
+  const canSubmit = isComplete && !submitting;
 
   return (
     <div data-testid={NEW_RUN.container} className="max-w-xl mx-auto">
@@ -96,17 +113,17 @@ export default function NewRun() {
         style={{ background: "#141B2E", border: "0.5px solid #1E293B" }}
       >
         <div>
-          <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>Target URL</label>
+          <FieldLabel>Target URL</FieldLabel>
           <Input data-testid={NEW_RUN.targetInput} value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} placeholder="https://example.com" className="rounded-lg" style={inputStyle} />
         </div>
 
         <div>
-          <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>Goal</label>
+          <FieldLabel>Goal</FieldLabel>
           <Input data-testid={NEW_RUN.goalInput} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} placeholder="e.g. Complete the checkout flow" className="rounded-lg" style={inputStyle} />
         </div>
 
         <div>
-          <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>Stage</label>
+          <FieldLabel>Stage</FieldLabel>
           <Select value={form.stage} onValueChange={(val) => setForm({ ...form, stage: val })}>
             <SelectTrigger data-testid={NEW_RUN.stageSelect} className="rounded-lg" style={inputStyle}><SelectValue /></SelectTrigger>
             <SelectContent style={dropdownStyle}>
@@ -117,7 +134,7 @@ export default function NewRun() {
         </div>
 
         <div>
-          <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>Persona Panel</label>
+          <FieldLabel>Persona Panel</FieldLabel>
           <Select value={form.panel_id} onValueChange={(val) => setForm({ ...form, panel_id: val, persona_index: "" })}>
             <SelectTrigger data-testid={NEW_RUN.panelSelect} className="rounded-lg" style={inputStyle}><SelectValue placeholder="Select a panel" /></SelectTrigger>
             <SelectContent style={dropdownStyle}>
@@ -128,17 +145,23 @@ export default function NewRun() {
           </Select>
         </div>
 
-        {selectedPanel && (selectedPanel.personas || []).length > 0 && (
-          <div>
-            <label className="text-[11px] uppercase tracking-wider mb-1.5 block" style={{ color: "#64748B" }}>Persona</label>
-            <Select value={form.persona_index} onValueChange={(val) => setForm({ ...form, persona_index: val })}>
-              <SelectTrigger className="rounded-lg" style={inputStyle}><SelectValue placeholder="Select a persona" /></SelectTrigger>
-              <SelectContent style={dropdownStyle}>
-                {selectedPanel.personas.map((p, i) => <SelectItem key={i} value={String(i)}>{p.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <div>
+          <FieldLabel>Persona</FieldLabel>
+          <Select
+            value={form.persona_index}
+            onValueChange={(val) => setForm({ ...form, persona_index: val })}
+            disabled={!selectedPanel || (selectedPanel.personas || []).length === 0}
+          >
+            <SelectTrigger className="rounded-lg" style={inputStyle}>
+              <SelectValue placeholder={selectedPanel ? "Select a persona" : "Select a panel first"} />
+            </SelectTrigger>
+            <SelectContent style={dropdownStyle}>
+              {(selectedPanel?.personas || []).map((p, i) => (
+                <SelectItem key={i} value={String(i)}>{p.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         {selectedPersona && (
           <div className="rounded-lg p-3" style={{ background: "#0B0F1A", border: "0.5px solid #334155" }}>
@@ -157,10 +180,28 @@ export default function NewRun() {
           </div>
         )}
 
-        <Button data-testid={NEW_RUN.startBtn} type="submit" disabled={submitting} className="w-full rounded-lg" style={{ background: "#2DD4BF", color: "#06231F" }}>
-          <Play className="w-4 h-4 mr-2" />
-          {submitting ? "Starting..." : "Start Run"}
-        </Button>
+        <div>
+          <Button
+            data-testid={NEW_RUN.startBtn}
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full rounded-lg"
+            style={{
+              background: "#2DD4BF",
+              color: "#06231F",
+              opacity: canSubmit ? 1 : 0.45,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+            }}
+          >
+            <Play className="w-4 h-4 mr-2" />
+            {submitting ? "Starting..." : "Start Run"}
+          </Button>
+          {!isComplete && (
+            <p className="text-[11px] mt-2 text-center" style={{ color: "#64748B" }}>
+              All fields are required to start a run.
+            </p>
+          )}
+        </div>
       </form>
     </div>
   );

@@ -9,7 +9,6 @@ const navItems = [
   { to: "/prototype", label: "Prototype", icon: Layers, testId: "nav-prototype" },
   { to: "/reports", label: "Reports", icon: FileText, testId: NAV.reports },
   { to: "/cross-stage-diff", label: "Cross-Stage Diff", icon: GitCompareArrows, testId: NAV.crossStageDiff },
-  { to: "/new-run", label: "New Run", icon: Play, testId: NAV.newRun },
 ];
 
 export default function Layout() {
@@ -58,6 +57,17 @@ export default function Layout() {
             </NavLink>
           ))}
         </div>
+
+        {/* New Run — primary action, pinned right */}
+        <NavLink
+          to="/new-run"
+          data-testid={NAV.newRun}
+          className="ml-auto shrink-0 flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-md transition-colors"
+          style={{ background: "#2DD4BF", color: "#06231F" }}
+        >
+          <Play className="w-4 h-4" />
+          <span className="whitespace-nowrap">New Run</span>
+        </NavLink>
       </nav>
 
       {/* Page Content */}
