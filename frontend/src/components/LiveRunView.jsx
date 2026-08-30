@@ -1,16 +1,74 @@
 import { useEffect, useRef, useState } from "react";
-import { getRunLive } from "@/lib/api";
+import { getRunLive, getEngineRun } from "@/lib/api";
 import { ExternalLink } from "lucide-react";
+
+/**
+ * Prototype runs have no Browserbase session — show the current mockup
+ * screenshot instead, refreshed by polling the run's step list.
+ */
+function PrototypeScreenView({ runId }) {
+  const [screenshotUrl, setScreenshotUrl] = useState(null);
+  const [live, setLive] = useState(true);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await getEngineRun(runId);
+        if (cancelled) return;
+        const steps = data.steps || [];
+        const last = steps[steps.length - 1];
+        if (last) setScreenshotUrl(last.screenshot_after_url || last.screenshot_before_url);
+        const stillLive = data.outcome === "in_progress";
+        setLive(stillLive);
+        if (stillLive) timer.current = setTimeout(poll, 3000);
+      } catch {
+        if (!cancelled) timer.current = setTimeout(poll, 5000);
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [runId]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs" style={{ color: "#94A3B8" }}>
+        {live && (
+          <span className="flex items-center gap-1.5" style={{ color: "#F43F5E" }}>
+            <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#F43F5E" }} />
+            LIVE
+          </span>
+        )}
+        Current mockup screen
+      </div>
+      <div
+        className="rounded-lg overflow-hidden flex items-center justify-center"
+        style={{ background: "#0B0F1A", border: "0.5px solid #1E293B", aspectRatio: "16 / 10" }}
+      >
+        {screenshotUrl ? (
+          <img src={screenshotUrl} alt="Current mockup screen" className="w-full h-full object-contain" />
+        ) : (
+          <div className="text-xs" style={{ color: "#64748B" }}>Waiting for the first step…</div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Embeds the Browserbase live view for a run's browser session.
  * Polls GET /api/engine/run/{id}/live until the session ends.
  */
-export default function LiveRunView({ runId }) {
+export default function LiveRunView({ runId, stage }) {
   const [state, setState] = useState({ status: "loading" });
   const timer = useRef(null);
 
   useEffect(() => {
+    if (stage === "prototype") return undefined;
     let cancelled = false;
 
     const poll = async () => {
@@ -34,7 +92,11 @@ export default function LiveRunView({ runId }) {
       cancelled = true;
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [runId]);
+  }, [runId, stage]);
+
+  if (stage === "prototype") {
+    return <PrototypeScreenView runId={runId} />;
+  }
 
   const { status, live_url, replay_url, detail } = state;
 

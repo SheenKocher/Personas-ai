@@ -18,6 +18,9 @@ export const getRunReport = (id, refresh) =>
   api.get(`/reports/run/${id}`, { params: refresh ? { refresh: true } : {} }).then((r) => r.data);
 export const getBatchReport = (id, refresh) =>
   api.get(`/reports/batch/${id}`, { params: refresh ? { refresh: true } : {} }).then((r) => r.data);
+// Pause/resume a running persona between steps.
+export const pauseRun = (id) => api.post(`/engine/run/${id}/pause`).then((r) => r.data);
+export const resumeRun = (id) => api.post(`/engine/run/${id}/resume`).then((r) => r.data);
 export const listRuns = (params) => api.get("/runs", { params }).then((r) => r.data);
 export const getRun = (id) => api.get(`/runs/${id}`).then((r) => r.data);
 export const updateRun = (id, data) => api.patch(`/runs/${id}`, data).then((r) => r.data);

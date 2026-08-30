@@ -6,6 +6,7 @@ import { Grid3X3, Eye, EyeOff, Keyboard, ZoomIn, Brain, Radio } from "lucide-rea
 import { Spinner, ErrorBanner, EmptyState } from "@/components/shared";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import LiveRunView from "@/components/LiveRunView";
+import RunActivityFeed from "@/components/RunActivityFeed";
 
 const disabilityIcons = {
   motor: Keyboard,
@@ -185,7 +186,7 @@ export default function LiveGrid() {
 
       <Dialog open={!!selectedRun} onOpenChange={(o) => !o && setSelectedRun(null)}>
         <DialogContent
-          className="max-w-3xl"
+          className="max-w-5xl"
           style={{ background: "#141B2E", border: "0.5px solid #1E293B", color: "#F1F5F9" }}
         >
           <DialogHeader>
@@ -214,6 +215,17 @@ export default function LiveGrid() {
               >
                 View friction report →
               </button>
+          {selectedRun && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ height: "60vh" }}>
+              <div className="min-h-0 overflow-y-auto pr-1">
+                <LiveRunView runId={selectedRun.id} stage={selectedRun.stage} />
+              </div>
+              <div className="min-h-0">
+                <RunActivityFeed
+                  run={selectedRun}
+                  onRunUpdate={(patch) => setSelectedRun((r) => (r ? { ...r, ...patch } : r))}
+                />
+              </div>
             </div>
           )}
         </DialogContent>

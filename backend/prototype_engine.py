@@ -17,6 +17,8 @@ import httpx
 from datetime import datetime, timezone
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+from ws_manager import broadcaster
+import run_control
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +173,7 @@ async def run_prototype_engine(
     goal: str,
     persona: dict,
     existing_run_id: str = None,
+    batch_id: str = None,
 ) -> dict:
     """
     Run a persona against a mockup state graph.
@@ -221,6 +224,8 @@ async def run_prototype_engine(
         run_id = str(result.inserted_id)
         run_oid = result.inserted_id
 
+    pause_event = run_control.register(run_id)
+
     # Initialize LLM
     system_prompt = _build_prototype_system_prompt(persona, goal, graph_name)
     llm_key = os.environ.get("EMERGENT_LLM_KEY", os.environ.get("OPENAI_API_KEY", ""))
@@ -233,6 +238,8 @@ async def run_prototype_engine(
     perception_mode = persona.get("perception_mode", "full")
 
     for step_index in range(MAX_STEPS):
+        await pause_event.wait()
+
         now_step = datetime.now(timezone.utc).isoformat()
 
         current_screen = screens_by_id.get(current_screen_id)
@@ -414,6 +421,21 @@ async def run_prototype_engine(
         # Update frustration
         frustration += frustration_increase
 
+        await broadcaster.send_step_update(
+            batch_id=batch_id,
+            run_id=run_id,
+            persona=persona,
+            step_index=step_index,
+            max_steps=MAX_STEPS,
+            action=step_doc["action"],
+            reasoning=reasoning,
+            screenshot_url=step_doc["screenshot_after_url"] or screen_image_url,
+            location=screen_name,
+            outcome="success" if goal_reached else ("gave_up" if wants_give_up else "in_progress"),
+            frustration=frustration,
+            frustration_budget=frustration_budget,
+        )
+
         # Check termination
         if goal_reached:
             outcome = "success"
@@ -445,6 +467,16 @@ async def run_prototype_engine(
     # Finalize
     updates = {"outcome": outcome, "ended_at": datetime.now(timezone.utc).isoformat()}
     await db.runs.update_one({"_id": run_oid}, {"$set": updates})
+
+    await broadcaster.send_run_complete(
+        batch_id=batch_id,
+        run_id=run_id,
+        persona_name=persona.get("name", "?"),
+        outcome=outcome,
+        total_steps=len(steps_out),
+        total_signals=len(signals_out),
+    )
+    run_control.discard(run_id)
 
     return {
         "run_id": run_id,
@@ -491,7 +523,7 @@ async def run_prototype_panel(
 
     async def _safe_run(rid, p):
         try:
-            return await run_prototype_engine(db, graph_id, goal, p, existing_run_id=rid)
+            return await run_prototype_engine(db, graph_id, goal, p, existing_run_id=rid, batch_id=batch_id)
         except Exception as e:
             logger.exception("Prototype persona '%s' failed", p.get("name"))
             try:
