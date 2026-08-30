@@ -22,7 +22,8 @@ import run_control
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 15
+# Step cap per prototype run — see engine.py. Override with MAX_STEPS in env.
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "25"))
 
 
 def _build_prototype_system_prompt(persona: dict, goal: str, graph_name: str) -> str:
