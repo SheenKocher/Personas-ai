@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listRuns, listPersonaPanels } from "@/lib/api";
 import { LIVE_GRID } from "@/constants/testIds";
-import { Grid3X3, Eye, EyeOff, Keyboard, ZoomIn, Brain } from "lucide-react";
+import { Grid3X3, Eye, EyeOff, Keyboard, ZoomIn, Brain, Radio } from "lucide-react";
 import { Spinner, ErrorBanner, EmptyState } from "@/components/shared";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import LiveRunView from "@/components/LiveRunView";
 
 const disabilityIcons = {
   motor: Keyboard,
@@ -69,12 +71,15 @@ function PersonaTile({ persona, index }) {
   );
 }
 
-function RunCard({ run }) {
+function RunCard({ run, onClick }) {
   const outcome = outcomeStyles[run.outcome] || outcomeStyles.in_progress;
+  const isRunning = run.outcome === "in_progress";
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       data-testid={LIVE_GRID.runCard}
-      className="rounded-xl p-4 transition-colors"
+      className="text-left rounded-xl p-4 transition-colors hover:border-[#334155] w-full"
       style={{ background: "#141B2E", border: "0.5px solid #1E293B" }}
     >
       <div className="flex items-center justify-between mb-2">
@@ -82,9 +87,10 @@ function RunCard({ run }) {
           {run.persona?.name || "Unknown Persona"}
         </span>
         <span
-          className="text-xs px-2 py-0.5 rounded-md font-medium"
+          className="text-xs px-2 py-0.5 rounded-md font-medium flex items-center gap-1"
           style={{ background: `${outcome.color}15`, color: outcome.color }}
         >
+          {isRunning && <Radio className="w-3 h-3" />}
           {outcome.label}
         </span>
       </div>
@@ -95,7 +101,10 @@ function RunCard({ run }) {
       {run.goal && (
         <p className="text-xs mt-2 truncate" style={{ color: "#94A3B8" }}>{run.goal}</p>
       )}
-    </div>
+      <p className="text-[10px] mt-2" style={{ color: "#475569" }}>
+        {isRunning ? "Click to watch live \u2192" : "Click for session replay \u2192"}
+      </p>
+    </button>
   );
 }
 
@@ -104,9 +113,11 @@ export default function LiveGrid() {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const pollRef = useRef(null);
 
-  const load = () => {
-    setLoading(true);
+  const load = ({ silent } = {}) => {
+    if (!silent) setLoading(true);
     setError(null);
     Promise.all([listPersonaPanels(), listRuns()])
       .then(([p, r]) => { setPanels(p); setRuns(r); })
@@ -115,6 +126,20 @@ export default function LiveGrid() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Auto-refresh the run list while any run is still in progress.
+  useEffect(() => {
+    const anyRunning = runs.some((r) => r.outcome === "in_progress");
+    if (anyRunning && !pollRef.current) {
+      pollRef.current = setInterval(() => load({ silent: true }), 5000);
+    } else if (!anyRunning && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [runs]);
 
   const allPersonas = panels.flatMap((p) => p.personas || []);
 
@@ -142,7 +167,9 @@ export default function LiveGrid() {
         <h2 className="text-lg font-medium mb-4" style={{ color: "#F1F5F9" }}>Recent Runs</h2>
         {runs.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {runs.map((run) => <RunCard key={run.id} run={run} />)}
+            {runs.map((run) => (
+              <RunCard key={run.id} run={run} onClick={() => setSelectedRun(run)} />
+            ))}
           </div>
         ) : (
           <div
@@ -153,6 +180,20 @@ export default function LiveGrid() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!selectedRun} onOpenChange={(o) => !o && setSelectedRun(null)}>
+        <DialogContent
+          className="max-w-3xl"
+          style={{ background: "#141B2E", border: "0.5px solid #1E293B", color: "#F1F5F9" }}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-sm font-medium">
+              {selectedRun?.persona?.name || "Run"} — {selectedRun?.goal || selectedRun?.target}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedRun && <LiveRunView runId={selectedRun.id} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

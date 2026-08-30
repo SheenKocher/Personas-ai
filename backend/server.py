@@ -434,6 +434,7 @@ async def get_engine_run_status(run_id: str):
         "browserbase_session_id": run_doc.get("browserbase_session_id"),
         "persona": run_doc.get("persona"),
         "still_running": run_id in _engine_tasks,
+        "error": run_doc.get("error"),
     }
 
     # If completed, include steps and signals
@@ -468,6 +469,53 @@ async def get_engine_run_status(run_id: str):
         run_data["total_signals"] = len(signals)
 
     return run_data
+
+
+@api_router.get("/engine/run/{run_id}/live")
+async def get_engine_run_live_view(run_id: str):
+    """
+    Return an embeddable Browserbase live-view URL for a running session.
+
+    status:
+      - "pending" : run started but the Browserbase session isn't attached yet
+      - "live"    : `live_url` is an iframe-able view of the running browser
+      - "ended"   : run finished / session gone; `replay_url` links to the recording
+    """
+    try:
+        oid = ObjectId(run_id)
+    except Exception:
+        raise HTTPException(400, "Invalid run ID")
+
+    run_doc = await db.runs.find_one({"_id": oid})
+    if not run_doc:
+        raise HTTPException(404, "Run not found")
+
+    session_id = run_doc.get("browserbase_session_id")
+    outcome = run_doc.get("outcome", "in_progress")
+    replay_url = f"https://www.browserbase.com/sessions/{session_id}" if session_id else None
+
+    if not session_id:
+        return {"status": "pending", "run_id": run_id}
+
+    if outcome != "in_progress":
+        return {"status": "ended", "run_id": run_id, "session_id": session_id, "replay_url": replay_url}
+
+    # Session should be live — ask Browserbase for the live-view URLs.
+    try:
+        from browserbase import Browserbase
+        bb = Browserbase(api_key=os.environ["BROWSERBASE_API_KEY"])
+        live = await _asyncio.to_thread(bb.sessions.debug, session_id)
+        return {
+            "status": "live",
+            "run_id": run_id,
+            "session_id": session_id,
+            "live_url": live.debugger_fullscreen_url,
+            "replay_url": replay_url,
+        }
+    except Exception as e:
+        logger.warning("Browserbase debug() failed for session %s: %s", session_id, e)
+        # Session likely already ended between our DB read and this call.
+        return {"status": "ended", "run_id": run_id, "session_id": session_id, "replay_url": replay_url}
 
 
 # --- Parallel Panel Engine ---
