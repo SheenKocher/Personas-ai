@@ -9,6 +9,7 @@ import asyncio
 import base64
 import io
 import os
+import re
 import logging
 from datetime import datetime, timezone
 
@@ -141,6 +142,9 @@ class BrowserSession:
 
     async def navigate(self, url: str):
         """Navigate to URL. Raises BrowserTimeoutError on timeout."""
+        url = url.strip()
+        if url and not re.match(r"^https?://", url, re.IGNORECASE):
+            url = f"https://{url}"
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=45_000)
             await self.page.wait_for_timeout(1500)

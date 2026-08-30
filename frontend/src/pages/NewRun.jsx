@@ -50,8 +50,12 @@ export default function NewRun() {
     }
     setSubmitting(true);
     try {
+      let target = form.target.trim();
+      if (form.stage === "runtime" && target && !/^https?:\/\//i.test(target)) {
+        target = `https://${target}`;
+      }
       await engineRun({
-        target_url: form.target,
+        target_url: target,
         goal: form.goal,
         stage: form.stage,
         persona: selectedPersona || null,
