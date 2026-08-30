@@ -424,9 +424,21 @@ export default function PrototypeStudio() {
       {/* Batch results */}
       {batchResult && (
         <div className="rounded-xl p-4" style={{ background: "#141B2E", border: "0.5px solid #1E293B" }}>
-          <span className="text-xs uppercase tracking-wider block mb-3" style={{ color: "#64748B" }}>
-            Results — {batchResult.total_runs} persona{batchResult.total_runs !== 1 ? "s" : ""}
-          </span>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs uppercase tracking-wider" style={{ color: "#64748B" }}>
+              Results — {batchResult.total_runs} persona{batchResult.total_runs !== 1 ? "s" : ""}
+            </span>
+            {batchResult.batch_id && (
+              <button
+                type="button"
+                onClick={() => navigate(`/reports?batch_id=${batchResult.batch_id}`)}
+                className="text-xs hover:underline"
+                style={{ color: "#2DD4BF" }}
+              >
+                View friction report →
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(batchResult.runs || []).map((r) => {
               const oc = { success: "#10B981", gave_up: "#F43F5E", max_steps: "#F59E0B", in_progress: "#2DD4BF" };
