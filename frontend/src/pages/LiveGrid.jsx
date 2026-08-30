@@ -194,7 +194,19 @@ export default function LiveGrid() {
               {selectedRun?.persona?.name || "Run"} — {selectedRun?.goal || selectedRun?.target}
             </DialogTitle>
           </DialogHeader>
-          {selectedRun && <LiveRunView runId={selectedRun.id} />}
+          {selectedRun && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ height: "60vh" }}>
+              <div className="min-h-0 overflow-y-auto pr-1">
+                <LiveRunView runId={selectedRun.id} stage={selectedRun.stage} />
+              </div>
+              <div className="min-h-0">
+                <RunActivityFeed
+                  run={selectedRun}
+                  onRunUpdate={(patch) => setSelectedRun((r) => (r ? { ...r, ...patch } : r))}
+                />
+              </div>
+            </div>
+          )}
           {selectedRun && (
             <div className="flex items-center justify-between pt-1">
               {selectedRun.error ? (
@@ -215,17 +227,6 @@ export default function LiveGrid() {
               >
                 View friction report →
               </button>
-          {selectedRun && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ height: "60vh" }}>
-              <div className="min-h-0 overflow-y-auto pr-1">
-                <LiveRunView runId={selectedRun.id} stage={selectedRun.stage} />
-              </div>
-              <div className="min-h-0">
-                <RunActivityFeed
-                  run={selectedRun}
-                  onRunUpdate={(patch) => setSelectedRun((r) => (r ? { ...r, ...patch } : r))}
-                />
-              </div>
             </div>
           )}
         </DialogContent>
