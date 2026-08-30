@@ -298,30 +298,53 @@ class EngineRunRequest(BaseModel):
 import asyncio as _asyncio
 _engine_tasks: dict = {}  # run_id -> asyncio.Task
 
+# Hard ceiling for a single engine run. 15 steps * (LLM call + browser actions +
+# screenshot uploads) — if it exceeds this, something is hung (LLM/CDP with no
+# timeout) and the run must be force-finalized so it can't show "Running" forever.
+ENGINE_RUN_TIMEOUT_S = 1200
+
+
+async def _mark_run_gave_up(run_id: str, reason: str):
+    try:
+        from bson import ObjectId as OID
+        await db.runs.update_one(
+            {"_id": OID(run_id), "outcome": "in_progress"},
+            {"$set": {"outcome": "gave_up",
+                      "ended_at": datetime.now(timezone.utc).isoformat(),
+                      "error": reason}},
+        )
+    except Exception:
+        logger.exception("Failed to mark run %s as gave_up", run_id)
+
+
 async def _run_engine_background(run_id: str, target_url: str, goal: str, persona: dict, stage: str):
-    """Background wrapper that catches all errors and finalizes the run."""
+    """Background wrapper that catches all errors and ALWAYS finalizes the run."""
     from engine import run_persona_engine
     try:
-        result = await run_persona_engine(
-            db=db,
-            target_url=target_url,
-            goal=goal,
-            persona=persona,
-            stage=stage,
-            existing_run_id=run_id,
+        return await _asyncio.wait_for(
+            run_persona_engine(
+                db=db,
+                target_url=target_url,
+                goal=goal,
+                persona=persona,
+                stage=stage,
+                existing_run_id=run_id,
+            ),
+            timeout=ENGINE_RUN_TIMEOUT_S,
         )
-        return result
+    except _asyncio.TimeoutError:
+        logger.error("Engine run %s timed out after %ss — force-finalizing", run_id, ENGINE_RUN_TIMEOUT_S)
+        await _mark_run_gave_up(run_id, f"Timed out after {ENGINE_RUN_TIMEOUT_S}s")
+        return {"run_id": run_id, "outcome": "gave_up", "error": "timeout"}
+    except _asyncio.CancelledError:
+        # Task cancelled (server shutdown / hot-reload). CancelledError is a
+        # BaseException, so a bare `except Exception` would miss it.
+        logger.warning("Engine run %s cancelled — marking gave_up", run_id)
+        await _mark_run_gave_up(run_id, "Cancelled (backend restart/shutdown)")
+        raise
     except Exception as e:
         logger.exception("Background engine run failed for %s", run_id)
-        # Try to update the run as gave_up
-        try:
-            from bson import ObjectId as OID
-            await db.runs.update_one(
-                {"_id": OID(run_id)},
-                {"$set": {"outcome": "gave_up", "ended_at": datetime.now(timezone.utc).isoformat()}}
-            )
-        except Exception:
-            pass
+        await _mark_run_gave_up(run_id, str(e)[:500])
         return {"run_id": run_id, "outcome": "gave_up", "error": str(e)}
     finally:
         _engine_tasks.pop(run_id, None)
@@ -1241,6 +1264,18 @@ async def seed_data():
 @app.on_event("startup")
 async def startup():
     logger.info("Starting up — seeding data if needed")
+
+    # Reconcile orphaned runs: any run left "in_progress" from a previous process
+    # (hard restart, crash, hot-reload) has no live task and will never finalize.
+    # Mark them gave_up so the UI/reports don't show a permanent "Running".
+    orphaned = await db.runs.update_many(
+        {"outcome": "in_progress"},
+        {"$set": {"outcome": "gave_up", "ended_at": datetime.now(timezone.utc).isoformat(),
+                  "error": "Orphaned on backend restart — engine task no longer running"}},
+    )
+    if orphaned.modified_count:
+        logger.warning("Reconciled %d orphaned in_progress run(s) -> gave_up", orphaned.modified_count)
+
     existing = await db.persona_panels.find_one({"client_ref": "seed-demo"})
     if not existing:
         await db.persona_panels.insert_one(SEED_PANEL.copy())

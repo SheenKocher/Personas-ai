@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listPersonaPanels, createRun } from "@/lib/api";
+import { listPersonaPanels, engineRun } from "@/lib/api";
 import { NEW_RUN } from "@/constants/testIds";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,17 +50,24 @@ export default function NewRun() {
     }
     setSubmitting(true);
     try {
-      await createRun({
-        target: form.target,
+      await engineRun({
+        target_url: form.target,
         goal: form.goal,
         stage: form.stage,
-        persona: selectedPersona || {},
-        outcome: "in_progress",
+        persona: selectedPersona || null,
+        persona_panel_id: form.panel_id || null,
+        persona_index: form.persona_index === "" ? 0 : parseInt(form.persona_index),
       });
       toast.success("Run started");
       navigate("/");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to create run");
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail;
+      toast.error(
+        status === 402
+          ? "Payment required — the first run is free; buy a credit for further runs."
+          : detail || "Failed to start run"
+      );
     } finally {
       setSubmitting(false);
     }

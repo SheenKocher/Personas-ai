@@ -7,6 +7,9 @@ const api = axios.create({ baseURL: API });
 
 // --- Runs ---
 export const createRun = (data) => api.post("/runs", data).then((r) => r.data);
+// Starts the actual persona engine in the background (perceive→think→act loop).
+// Use this to START a run; createRun() is only a bare DB insert and never executes.
+export const engineRun = (data) => api.post("/engine/run", data).then((r) => r.data);
 export const listRuns = (params) => api.get("/runs", { params }).then((r) => r.data);
 export const getRun = (id) => api.get(`/runs/${id}`).then((r) => r.data);
 export const updateRun = (id, data) => api.patch(`/runs/${id}`, data).then((r) => r.data);
