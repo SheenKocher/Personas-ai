@@ -5,7 +5,11 @@ Uses emergentintegrations StripeCheckout for Flow B (test key from env).
 
 import os
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
 
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout,
@@ -32,6 +36,15 @@ async def check_run_credits(db) -> dict:
     First run is free; subsequent runs need a paid credit.
     Returns {can_run, free_used, paid_unused, total_runs}.
     """
+    if os.environ.get("DISABLE_PAYWALL", "").lower() in ("1", "true", "yes"):
+        return {
+            "can_run": True,
+            "free_used": False,
+            "paid_credits": 999,
+            "total_runs": 0,
+            "price": RUN_PRICE,
+        }
+
     total_runs = await db.runs.count_documents({"outcome": {"$ne": "in_progress"}})
     paid_unused = await db.payment_transactions.count_documents({
         "payment_status": "paid",
