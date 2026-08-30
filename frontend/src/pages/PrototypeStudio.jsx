@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import axios from "axios";
 import { Spinner, ErrorBanner } from "@/components/shared";
+import { usePaywall } from "@/hooks/usePaywall";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -161,6 +162,7 @@ export default function PrototypeStudio() {
   const [loadError, setLoadError] = useState(null);
   const pollRef = useRef(null);
   const pollCountRef = useRef(0);
+  const { canRun: paywallCanRun, PaywallGate } = usePaywall();
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -275,7 +277,7 @@ export default function PrototypeStudio() {
     }
   };
 
-  const canRun = screens.length > 0 && transitions.length > 0 && goal.trim();
+  const canRun = screens.length > 0 && transitions.length > 0 && goal.trim() && paywallCanRun;
 
   return (
     <div data-testid="prototype-studio-container">
@@ -372,6 +374,9 @@ export default function PrototypeStudio() {
           <Check className="w-4 h-4 mr-1.5" /> {saving ? "Saving..." : "Save graph"}
         </Button>
       </div>
+
+      {/* Paywall */}
+      <PaywallGate />
 
       {/* Run config */}
       <div className="rounded-xl p-4 mb-4" style={{ background: "#141B2E", border: "0.5px solid #1E293B" }}>

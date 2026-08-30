@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import axios from "axios";
 import { toast } from "sonner";
+import { usePaywall } from "@/hooks/usePaywall";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -350,6 +351,7 @@ export default function PersonaPanels() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const saveTimer = useRef(null);
+  const { canRun: paywallCanRun, PaywallGate } = usePaywall();
 
   /* Fetch panels */
   const fetchPanels = useCallback(async () => {
@@ -487,7 +489,7 @@ export default function PersonaPanels() {
   };
 
   /* Can run? */
-  const canRun = personas.length > 0 && targetUrl.trim().length > 0;
+  const canRun = personas.length > 0 && targetUrl.trim().length > 0 && paywallCanRun;
 
   const handleRun = () => {
     // Navigate to new-run with panel pre-selected
@@ -670,6 +672,9 @@ export default function PersonaPanels() {
             </p>
           </div>
         )}
+
+        {/* ── PaywallGate ── */}
+        <PaywallGate />
 
         {/* ── Run bar ── */}
         <div

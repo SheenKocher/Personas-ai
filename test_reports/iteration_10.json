@@ -1,0 +1,28 @@
+{
+  "summary": "Full end-to-end verification of the Stripe test-mode paywall. Backend 10/10 pytest cases passing in /app/backend/tests/test_paywall.py: GET /api/payments/credits returns correct shape {can_run, free_used, paid_credits, total_runs, price} — with 13+ existing runs, free_used=true, can_run=false, paid_credits=0. All three run endpoints (POST /api/engine/run, /api/engine/run-panel, /api/prototype/run) correctly return HTTP 402 with 'Payment required' message when no credits available. POST /api/payments/checkout creates a real Stripe test session — checkout_url starts with https://checkout.stripe.com and session_id is returned; a payment_transactions record is inserted. GET /api/payments/status/{session_id} returns {session_id, status, payment_status} for the created session and 404 for invalid ids. Regression endpoints /api/health and /api/persona-panels still return 200. Frontend verified via Playwright at REACT_APP_BACKEND_URL: /persona-panels renders PaywallGate banner ('Free run used — Purchase a run credit ($1.00) to continue testing') positioned between persona cards and run bar, data-testid=paywall-gate and data-testid=paywall-purchase-btn present, 'Run this panel' button is disabled. /prototype renders paywall-gate above the run config section. /payment/success mounts and shows Spinner + 'Confirming payment...' initially (transitions to error state on invalid session). /payment/cancel shows 'Payment cancelled' with 'Back to app' button (data-testid=payment-cancel-back). All other pages (/, /new-run, /reports, /cross-stage-diff, /generate-panel) load with HTTP 200 and no console/page errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_paywall.py",
+    "/app/test_reports/pytest/paywall_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Payment.jsx uses raw axios + local `${process.env.REACT_APP_BACKEND_URL}/api` instead of shared /lib/api.js — same DRY violation flagged in prior iterations.",
+    "usePaywall hook fetches /api/payments/credits on mount but does not refresh after a payment success — user has to reload the page after paying. Consider calling refresh() on window focus or when returning from /payment/success.",
+    "consume_credit in paywall.py has a small race: total_runs is counted first and then a paid credit update is attempted; two concurrent first-time users could both see total_runs==0 and get 'free run' — very unlikely in single-user test tool but worth noting.",
+    "Stripe amount is hard-coded server-side (good), but the client Payment.jsx uses a hard-coded price string ($1.00) in usePaywall banner text; if RUN_PRICE changes in paywall.py the UI would drift.",
+    "PaymentSuccess polls every 2s up to 15 attempts (30s max); no visual indication of remaining time — minor UX polish.",
+    "server.py: `from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest` sits between endpoints (line 248) — move all imports to top of file.",
+    "server.py remains 1291 lines; router split still recommended (payments/paywall could easily be split into a submodule)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_paywall.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all paywall UI + regression pages)"},
+  "test_credentials": "Stripe test key sk_test_emergent in /app/backend/.env (pre-injected).",
+  "seed_data_creation": "One pending payment_transactions record inserted during checkout test (session_id from Stripe test mode, payment_status=pending, credit_used=false). Not marked paid — safe to remain or be cleaned up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Paywall feature verified end-to-end. All 3 run endpoints properly gate with 402 when can_run=false. Checkout session creation works with sk_test_emergent. If the tester wants to fully verify the paid flow, they must complete a Stripe checkout (test card 4242 4242 4242 4242) — I did NOT complete a payment per instruction. The pending payment_transactions record from my checkout test remains in Mongo; consuming logic filters on payment_status='paid' so it won't affect can_run. To reset the paywall state (make can_run=true again), either (a) complete a Stripe test checkout or (b) manually insert a payment_transactions doc with payment_status='paid' and credit_used=false. Backend test file at /app/backend/tests/test_paywall.py is a stable regression suite for this feature."
+}

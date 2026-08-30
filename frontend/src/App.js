@@ -9,6 +9,7 @@ import Reports from "@/pages/Reports";
 import CrossStageDiff from "@/pages/CrossStageDiff";
 import GeneratePanel from "@/pages/GeneratePanel";
 import PrototypeStudio from "@/pages/PrototypeStudio";
+import { PaymentSuccess, PaymentCancel } from "@/pages/Payment";
 
 function App() {
   return (
@@ -31,6 +32,8 @@ function App() {
           <Route path="generate-panel" element={<GeneratePanel />} />
           <Route path="new-run" element={<NewRun />} />
           <Route path="prototype" element={<PrototypeStudio />} />
+          <Route path="payment/success" element={<PaymentSuccess />} />
+          <Route path="payment/cancel" element={<PaymentCancel />} />
           <Route path="reports" element={<Reports />} />
           <Route path="cross-stage-diff" element={<CrossStageDiff />} />
         </Route>

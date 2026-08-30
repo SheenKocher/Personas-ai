@@ -180,6 +180,94 @@ async def health():
     return {"status": "ok"}
 
 
+# --- Payments / Paywall ---
+
+from starlette.requests import Request
+
+@api_router.get("/payments/credits")
+async def get_credits():
+    from paywall import check_run_credits
+    return await check_run_credits(db)
+
+class PaymentCheckoutRequest(BaseModel):
+    origin_url: str
+
+@api_router.post("/payments/checkout")
+async def create_payment_checkout(body: PaymentCheckoutRequest, request: Request):
+    from paywall import get_stripe_checkout, RUN_PRICE
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    sc = get_stripe_checkout(webhook_url)
+    req = CheckoutSessionRequest(
+        amount=RUN_PRICE,
+        currency="usd",
+        success_url=f"{body.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{body.origin_url}/payment/cancel",
+        metadata={"type": "run_credit"},
+    )
+    session = await sc.create_checkout_session(req)
+    # Record transaction before redirect
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "amount": RUN_PRICE,
+        "currency": "usd",
+        "status": "initiated",
+        "payment_status": "pending",
+        "credit_used": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"checkout_url": session.url, "session_id": session.session_id}
+
+@api_router.get("/payments/status/{session_id}")
+async def get_payment_status(session_id: str, request: Request):
+    record = await db.payment_transactions.find_one({"session_id": session_id})
+    if not record:
+        raise HTTPException(404, "Transaction not found")
+    # Poll Stripe directly if still pending
+    if record.get("payment_status") != "paid":
+        from paywall import get_stripe_checkout
+        host_url = str(request.base_url)
+        sc = get_stripe_checkout(f"{host_url}api/webhook/stripe")
+        try:
+            status = await sc.get_checkout_status(session_id)
+            if status.payment_status == "paid":
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {"status": "completed", "payment_status": "paid",
+                              "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                record = await db.payment_transactions.find_one({"session_id": session_id})
+        except Exception:
+            pass
+    return {
+        "session_id": record["session_id"],
+        "status": record.get("status"),
+        "payment_status": record.get("payment_status"),
+    }
+
+from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    from paywall import get_stripe_checkout
+    host_url = str(request.base_url)
+    sc = get_stripe_checkout(f"{host_url}api/webhook/stripe")
+    body_bytes = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = await sc.handle_webhook(body_bytes, sig)
+    except Exception as e:
+        logger.warning("Webhook verification failed: %s", e)
+        raise HTTPException(400, "Invalid webhook")
+    if event.payment_status == "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": event.session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {"status": "completed", "payment_status": "paid",
+                      "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return {"status": "ok"}
+
+
 # --- Spike: Remote Browser Test ---
 
 class SpikeRunRequest(BaseModel):
@@ -244,6 +332,11 @@ from starlette.responses import JSONResponse
 async def engine_run(body: EngineRunRequest):
     from engine import run_persona_engine
     from browser import BrowserUpstreamError, BrowserTimeoutError
+    from paywall import consume_credit
+
+    # Paywall check
+    if not await consume_credit(db):
+        raise HTTPException(402, "Payment required. Purchase a run credit first.")
 
     # Resolve persona
     persona = body.persona
@@ -391,6 +484,11 @@ async def _run_panel_background(batch_id: str, target_url: str, goal: str, perso
 async def engine_run_panel(body: PanelRunRequest):
     """Start parallel engine runs for multiple personas from a panel."""
     import uuid as _uuid
+    from paywall import consume_credit
+
+    # Paywall check
+    if not await consume_credit(db):
+        raise HTTPException(402, "Payment required. Purchase a run credit first.")
 
     # Resolve panel
     if body.persona_panel_id:
@@ -647,6 +745,11 @@ async def _run_proto_background(batch_id, graph_id, goal, personas, concurrency)
 async def prototype_run(body: PrototypeRunRequest):
     """Start prototype persona runs against a screen graph."""
     import uuid as _uuid
+    from paywall import consume_credit
+
+    # Paywall check
+    if not await consume_credit(db):
+        raise HTTPException(402, "Payment required. Purchase a run credit first.")
 
     # Verify graph exists
     try:
