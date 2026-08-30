@@ -13,8 +13,10 @@ import sys
 from PIL import Image
 import requests
 
-# Backend base URL from frontend/.env REACT_APP_BACKEND_URL
-BASE_URL = "https://9029a9de-8419-428d-a72b-dbf3cd7e5649.preview.emergentagent.com/api"
+import os
+
+# Backend base URL from env or default to local
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8001/api").rstrip("/")
 
 def create_test_png() -> bytes:
     """Create a small valid PNG image in memory."""
