@@ -18,9 +18,10 @@ load_dotenv(ROOT_DIR / '.env')
 from ws_manager import broadcaster
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', '').strip()
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db_name = os.environ.get('DB_NAME', 'synthtest_database').strip()
+db = client[db_name]
 
 # Configure logging
 logging.basicConfig(
