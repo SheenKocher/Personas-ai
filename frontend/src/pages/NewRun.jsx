@@ -28,7 +28,7 @@ export default function NewRun() {
   const [form, setForm] = useState({
     target: "",
     goal: "",
-    stage: "prototype",
+    stage: "runtime",
     panel_id: "",
     persona_index: "",
   });
@@ -127,7 +127,6 @@ export default function NewRun() {
           <Select value={form.stage} onValueChange={(val) => setForm({ ...form, stage: val })}>
             <SelectTrigger data-testid={NEW_RUN.stageSelect} className="rounded-lg" style={inputStyle}><SelectValue /></SelectTrigger>
             <SelectContent style={dropdownStyle}>
-              <SelectItem value="prototype">Prototype</SelectItem>
               <SelectItem value="runtime">Runtime</SelectItem>
             </SelectContent>
           </Select>
