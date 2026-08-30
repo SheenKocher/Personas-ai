@@ -87,6 +87,9 @@ class Run(BaseDocument):
     outcome: OutcomeEnum = OutcomeEnum.in_progress
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
+    batch_id: Optional[str] = None
+    browserbase_session_id: Optional[str] = None
+    error: Optional[str] = None
 
 class RunCreate(BaseModel):
     stage: StageEnum

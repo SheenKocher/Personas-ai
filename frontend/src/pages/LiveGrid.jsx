@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { listRuns, listPersonaPanels } from "@/lib/api";
 import { LIVE_GRID } from "@/constants/testIds";
 import { Grid3X3, Eye, EyeOff, Keyboard, ZoomIn, Brain, Radio } from "lucide-react";
@@ -109,6 +110,7 @@ function RunCard({ run, onClick }) {
 }
 
 export default function LiveGrid() {
+  const navigate = useNavigate();
   const [panels, setPanels] = useState([]);
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -192,6 +194,28 @@ export default function LiveGrid() {
             </DialogTitle>
           </DialogHeader>
           {selectedRun && <LiveRunView runId={selectedRun.id} />}
+          {selectedRun && (
+            <div className="flex items-center justify-between pt-1">
+              {selectedRun.error ? (
+                <span className="text-[11px] truncate mr-3" style={{ color: "#F43F5E" }} title={selectedRun.error}>
+                  {selectedRun.error}
+                </span>
+              ) : <span />}
+              <button
+                type="button"
+                onClick={() => {
+                  const q = selectedRun.batch_id
+                    ? `batch_id=${selectedRun.batch_id}`
+                    : `run_ids=${selectedRun.id}`;
+                  navigate(`/reports?${q}`);
+                }}
+                className="text-xs shrink-0 hover:underline"
+                style={{ color: "#2DD4BF" }}
+              >
+                View friction report →
+              </button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
